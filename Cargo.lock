@@ -4405,6 +4405,7 @@ dependencies = [
  "near-primitives",
  "near-sdk",
  "near-workspaces",
+ "once_cell",
  "p256",
  "rand_chacha",
  "rand_core",
