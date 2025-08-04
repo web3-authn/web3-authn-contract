@@ -25,22 +25,6 @@ use crate::utils::parsers::{
 #[near]
 impl WebAuthnContract {
 
-    /// Register a new user in the contract
-    /// @payable - This function can be called with attached NEAR tokens
-    #[payable]
-    pub fn register_user(&mut self, user_id: AccountId) -> bool {
-        require!(self.only_sender_or_admin(&user_id), "Must be called by the user, owner, or admins");
-
-        if self.registered_users.contains(&user_id) {
-            log!("User {} already registered", user_id);
-            return false;
-        }
-        // Add to registry
-        self.registered_users.insert(user_id.clone());
-        log!("User {} registered successfully", user_id);
-        true
-    }
-
     /////////////////////////////////////
     /// AUTHENTICATORS
     /////////////////////////////////////
@@ -166,7 +150,7 @@ impl WebAuthnContract {
         // 2. Register user in user registry if not already registered
         if !self.registered_users.contains(&account_id) {
             log!("Registering new user in user registry: {}", account_id);
-            self.register_user(account_id.clone());
+            self.registered_users.insert(account_id.clone());
         } else {
             log!("User already registered in user registry: {}", account_id);
         }
