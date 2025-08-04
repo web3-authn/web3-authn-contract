@@ -8,13 +8,13 @@ use utils_mocks::{
 };
 
 mod utils_contracts;
-use utils_contracts::deploy_test_contract;
+use utils_contracts::get_or_deploy_contract;
 
 
 #[tokio::test]
 async fn test_device_counter_incremented_by_link_device_register_user() -> Result<(), Box<dyn std::error::Error>> {
     // Deploy contract using near_workspaces
-    let contract = deploy_test_contract().await?;
+    let contract = get_or_deploy_contract().await;
 
     // Get the sandbox for fast_forward and block operations
     let sandbox = near_workspaces::sandbox().await?;

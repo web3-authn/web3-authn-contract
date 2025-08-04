@@ -4,7 +4,6 @@
 //! account creation with VRF-based WebAuthn registration in a single atomic transaction.
 
 use near_workspaces::types::Gas;
-use near_sdk::NearToken;
 use serde_json::json;
 
 mod utils_mocks;
@@ -16,7 +15,7 @@ use utils_mocks::{
 };
 
 mod utils_contracts;
-use utils_contracts::deploy_test_contract;
+use utils_contracts::get_or_deploy_contract;
 
 const ACCOUNT_CREATION_GAS_LIMIT: u64 = 70;
 
@@ -24,15 +23,15 @@ const ACCOUNT_CREATION_GAS_LIMIT: u64 = 70;
 async fn test_create_account_and_register_user_e2e() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting Create Account and Verify E2E Test...");
 
-    // Deploy contract
-    let contract = deploy_test_contract().await?;
+    // Get shared contract instance
+    let contract = get_or_deploy_contract().await;
 
     // Test data for account creation
     let (
         rp_id,
         user_id,
         session_id,
-        block_height,
+        _block_height,
         new_public_key
     ) = generate_account_creation_data();
     // Generate VRF data
@@ -74,8 +73,8 @@ async fn test_create_account_and_register_user_e2e() -> Result<(), Box<dyn std::
 async fn test_vrf_registration_e2e_success() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting VRF WebAuthn Registration E2E Test...");
 
-    // Deploy contract
-    let contract = deploy_test_contract().await?;
+    // Get shared contract instance
+    let contract = get_or_deploy_contract().await;
 
     // Test data for account creation
     let rp_id = "example.com";
@@ -144,14 +143,14 @@ async fn test_vrf_registration_e2e_success() -> Result<(), Box<dyn std::error::E
 async fn test_vrf_registration_wrong_rp_id() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing VRF registration with mismatched RP ID...");
 
-    let contract = deploy_test_contract().await?;
+    let contract = get_or_deploy_contract().await;
 
     // Test data for account creation
     let (
         rp_id,
         user_id,
         session_id,
-        block_height,
+        _block_height,
         new_public_key
     ) = generate_account_creation_data();
     // Generate VRF data
@@ -191,13 +190,13 @@ async fn test_vrf_registration_wrong_rp_id() -> Result<(), Box<dyn std::error::E
 async fn test_vrf_registration_corrupted_proof() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing VRF registration with corrupted proof...");
 
-    let contract = deploy_test_contract().await?;
+    let contract = get_or_deploy_contract().await;
 
     let (
         rp_id,
         user_id,
         session_id,
-        block_height,
+        _block_height,
         new_public_key
     ) = generate_account_creation_data();
     // Generate VRF data
@@ -250,13 +249,13 @@ async fn test_vrf_registration_corrupted_proof() -> Result<(), Box<dyn std::erro
 async fn test_vrf_registration_challenge_mismatch() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing VRF registration with challenge mismatch...");
 
-    let contract = deploy_test_contract().await?;
+    let contract = get_or_deploy_contract().await;
 
     let (
         rp_id,
         user_id,
         session_id,
-        block_height,
+        _block_height,
         new_public_key
     ) = generate_account_creation_data();
     // Generate VRF data
@@ -302,7 +301,6 @@ async fn test_vrf_registration_input_construction_validation() -> Result<(), Box
     let rp_id2 = "different.com";
     let user_id = "test_user";
     let session_id = "test_session";
-    let block_height = 123456789u64;
 
     let vrf_data1 = generate_vrf_data(rp_id1, user_id, session_id, None, None).await?;
     let vrf_data2 = generate_vrf_data(rp_id2, user_id, session_id, None, None).await?;
