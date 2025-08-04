@@ -37,11 +37,54 @@
 // // Shared contract instance for all tests (deploy just once)
 // static CONTRACT: OnceCell<near_workspaces::Contract> = OnceCell::const_new();
 
-// async fn get_contract() -> &'static near_workspaces::Contract {
+// async fn get_or_deploy_contract() -> &'static near_workspaces::Contract {
 //     CONTRACT.get_or_init(|| async {
 //         println!("Deploying shared test contract for VRF contract verifier tests...");
 //         utils_contracts::deploy_test_contract().await.expect("Failed to deploy test contract")
 //     }).await
+// }
+
+// /// VRF proof data structure for testing
+// #[derive(Debug)]
+// pub struct VrfTestData {
+//     pub proof: ECVRFProof,
+//     pub public_key: ECVRFPublicKey,
+//     pub input: Vec<u8>,
+//     pub expected_output: Vec<u8>,
+// }
+
+// impl VrfTestData {
+//     pub fn proof_bytes(&self) -> Vec<u8> {
+//         bincode::serialize(&self.proof).unwrap()
+//     }
+
+//     pub fn pubkey_bytes(&self) -> Vec<u8> {
+//         bincode::serialize(&self.public_key).unwrap()
+//     }
+// }
+
+// pub async fn generate_test_vrf_wasm_data() -> Result<VrfTestData, Box<dyn std::error::Error>> {
+//     // Create deterministic keypair using WasmRngFromSeed
+//     let seed = [42u8; 32];
+//     let mut rng = WasmRngFromSeed::from_seed(seed);
+//     let keypair = ECVRFKeyPair::generate(&mut rng);
+
+//     // Test input
+//     let input = b"test_vrf_wasm_input_v1.0".to_vec();
+
+//     // Generate VRF proof using vrf-wasm
+//     let proof = keypair.prove(&input);
+//     let vrf_output = proof.to_hash();
+
+//     // Verify the proof works locally
+//     assert!(proof.verify(&input, &keypair.pk).is_ok(), "Generated proof should be valid");
+
+//     Ok(VrfTestData {
+//         proof,
+//         public_key: keypair.pk,
+//         input: input.clone(),
+//         expected_output: vrf_output.to_vec(),
+//     })
 // }
 
 // ////////////////////////////////////////////////////////////
@@ -56,7 +99,7 @@
 //     async fn test_vrf_contract_verifier_valid_proof_passes() -> Result<(), Box<dyn std::error::Error>> {
 //         println!("Test: Valid proof should pass");
 
-//         let contract = get_contract().await;
+//         let contract = get_or_deploy_contract().await;
 //         let test_data = utils_mocks::generate_test_vrf_wasm_data().await?;
 
 //         let verification_result: serde_json::Value = contract
@@ -88,7 +131,7 @@
 //     async fn test_vrf_contract_verifier_wrong_proof_fails() -> Result<(), Box<dyn std::error::Error>> {
 //         println!("Test: Wrong proof should fail");
 
-//         let contract = get_contract().await;
+//         let contract = get_or_deploy_contract().await;
 //         let test_data = utils_mocks::generate_test_vrf_wasm_data().await?;
 
 //         // Create corrupted proof by modifying some bytes
@@ -125,7 +168,7 @@
 //     async fn test_vrf_contract_verifier_malformed_public_key_fails() -> Result<(), Box<dyn std::error::Error>> {
 //         println!("Test: Malformed public key should fail");
 
-//         let contract = get_contract().await;
+//         let contract = get_or_deploy_contract().await;
 //         let test_data = utils_mocks::generate_test_vrf_wasm_data().await?;
 
 //         // Create invalid public key
@@ -154,7 +197,7 @@
 //     async fn test_vrf_contract_verifier_truncated_proof_fails() -> Result<(), Box<dyn std::error::Error>> {
 //         println!("Test: Truncated proof should fail");
 
-//         let contract = get_contract().await;
+//         let contract = get_or_deploy_contract().await;
 //         let test_data = utils_mocks::generate_test_vrf_wasm_data().await?;
 
 //         // Truncate the proof to half its original size
@@ -188,7 +231,7 @@
 //     async fn test_vrf_contract_verifier_roundtrip_verification() -> Result<(), Box<dyn std::error::Error>> {
 //         println!("Test: Roundtrip verification");
 
-//         let contract = get_contract().await;
+//         let contract = get_or_deploy_contract().await;
 //         let test_data = utils_mocks::generate_test_vrf_wasm_data().await?;
 
 //         let verification_result: serde_json::Value = contract

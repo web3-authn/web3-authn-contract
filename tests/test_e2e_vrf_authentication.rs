@@ -25,8 +25,12 @@ use utils_mocks::{
     create_mock_webauthn_authentication,
     generate_account_creation_data,
     generate_vrf_data,
-    generate_deterministic_vrf_public_key
+    generate_deterministic_vrf_public_key,
+    VrfData,
 };
+
+mod utils_contracts;
+use utils_contracts::get_or_deploy_contract;
 
 
 #[tokio::test]
@@ -34,8 +38,8 @@ async fn test_complete_vrf_user_journey_e2e() -> Result<(), Box<dyn std::error::
     println!("Starting complete VRF User Journey E2E Test...");
     println!("   Testing: Register → Authenticate → Re-authenticate");
 
-    // Deploy contract
-    let contract = deploy_test_contract().await?;
+    // Get shared contract instance
+    let contract = get_or_deploy_contract().await;
 
     // === PHASE 1: REGISTRATION ===
     println!("PHASE 1: VRF Registration (first-time setup)");
@@ -47,7 +51,7 @@ async fn test_complete_vrf_user_journey_e2e() -> Result<(), Box<dyn std::error::
         new_public_key
     ) = generate_account_creation_data();
     // Generate VRF data
-    let vrf_data = generate_vrf_data(&rp_id, &user_id, &session_id, None, None).await?;
+    let vrf_data: VrfData = generate_vrf_data(&rp_id, &user_id, &session_id, None, None).await?;
     let deterministic_vrf_public_key = generate_deterministic_vrf_public_key();
     // Create WebAuthn registration data
     let webauthn_registration = create_mock_webauthn_registration(
@@ -200,8 +204,8 @@ async fn test_complete_vrf_user_journey_e2e() -> Result<(), Box<dyn std::error::
 async fn test_vrf_authentication_e2e_success() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting VRF WebAuthn Authentication E2E Test...");
 
-    // Deploy contract
-    let contract = deploy_test_contract().await?;
+    // Get shared contract instance
+    let contract = get_or_deploy_contract().await;
 
     // Generate VRF authentication data
     let rp_id = "example.com";
@@ -272,7 +276,7 @@ async fn test_vrf_authentication_e2e_success() -> Result<(), Box<dyn std::error:
 async fn test_vrf_public_key_retrieval() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing VRF Public Key Retrieval from Stored Authenticators...");
 
-    let contract = deploy_test_contract().await?;
+    let contract = get_or_deploy_contract().await;
 
     let rp_id = "keytest.com";
     let user_id = "charlie.testnet";
@@ -343,7 +347,7 @@ async fn test_vrf_public_key_retrieval() -> Result<(), Box<dyn std::error::Error
 async fn test_vrf_authentication_stateless_validation() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing VRF Authentication Stateless Validation...");
 
-    let contract = deploy_test_contract().await?;
+    let contract = get_or_deploy_contract().await;
     let rp_id = "stateless.com";
     let user_id = "stateless.testnet";
     let seed = [77u8; 32];
@@ -389,7 +393,7 @@ async fn test_vrf_authentication_stateless_validation() -> Result<(), Box<dyn st
 async fn test_vrf_authentication_cross_domain_security() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing VRF Authentication Cross-Domain Security...");
 
-    let contract = deploy_test_contract().await?;
+    let contract = get_or_deploy_contract().await;
     let user_id = "security.testnet";
     let session_id = "security_test_session";
     let seed = [88u8; 32];
@@ -452,24 +456,3 @@ async fn test_vrf_authentication_cross_domain_security() -> Result<(), Box<dyn s
     Ok(())
 }
 
-async fn deploy_test_contract() -> Result<near_workspaces::Contract, Box<dyn std::error::Error>> {
-    println!("Deploying test contract for VRF authentication...");
-
-    let contract_wasm = near_workspaces::compile_project("./").await?;
-    let sandbox = near_workspaces::sandbox().await?;
-    let contract = sandbox.dev_deploy(&contract_wasm).await?;
-
-    // Initialize contract
-    let _result = contract
-        .call("init")
-        .args_json(json!({
-            "vrf_settings": null,
-            "tld_config": null
-        }))
-        .gas(Gas::from_tgas(100))
-        .transact()
-        .await?;
-
-    println!("Contract deployed and initialized");
-    Ok(contract)
-}

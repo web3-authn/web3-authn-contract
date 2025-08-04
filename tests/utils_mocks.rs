@@ -11,24 +11,6 @@ use std::collections::BTreeMap;
 use serde_cbor;
 use sha2::{Sha256, Digest};
 
-/// VRF proof data structure for testing
-#[derive(Debug)]
-pub struct VrfTestData {
-    pub proof: ECVRFProof,
-    pub public_key: ECVRFPublicKey,
-    pub input: Vec<u8>,
-    pub expected_output: Vec<u8>,
-}
-
-impl VrfTestData {
-    pub fn proof_bytes(&self) -> Vec<u8> {
-        bincode::serialize(&self.proof).unwrap()
-    }
-
-    pub fn pubkey_bytes(&self) -> Vec<u8> {
-        bincode::serialize(&self.public_key).unwrap()
-    }
-}
 
 // Test VRF data structure for authentication (subsequent logins)
 #[derive(Debug)]
@@ -64,30 +46,6 @@ impl VrfData {
             "block_hash": self.block_hash
         })
     }
-}
-
-pub async fn generate_test_vrf_wasm_data() -> Result<VrfTestData, Box<dyn std::error::Error>> {
-    // Create deterministic keypair using WasmRngFromSeed
-    let seed = [42u8; 32];
-    let mut rng = WasmRngFromSeed::from_seed(seed);
-    let keypair = ECVRFKeyPair::generate(&mut rng);
-
-    // Test input
-    let input = b"test_vrf_wasm_input_v1.0".to_vec();
-
-    // Generate VRF proof using vrf-wasm
-    let proof = keypair.prove(&input);
-    let vrf_output = proof.to_hash();
-
-    // Verify the proof works locally
-    assert!(proof.verify(&input, &keypair.pk).is_ok(), "Generated proof should be valid");
-
-    Ok(VrfTestData {
-        proof,
-        public_key: keypair.pk,
-        input: input.clone(),
-        expected_output: vrf_output.to_vec(),
-    })
 }
 
 pub fn generate_account_creation_data() -> (String, String, String, u64, String) {
