@@ -1,0 +1,14 @@
+# environment files
+.env
+**/.env
+**/.env.*
+
+# Build output
+target
+
+# Editor directories and files
+.vscode/*
+.DS_Store
+
+commands.sh
+/docs
