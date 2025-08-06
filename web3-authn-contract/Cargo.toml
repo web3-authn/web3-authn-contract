@@ -1,0 +1,62 @@
+[package]
+name = "web3-authn-contract"
+description = "Web3 Authn Contract"
+version = "0.4.0"
+edition = "2021"
+repository = "https://github.com/web3-authn/web3-authn-contract"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Build with WASM reproducibility, according to NEP-0330
+# https://github.com/near/NEPs/blob/master/neps/nep-0330.md
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.14.1-rust-1.86.0"
+image_digest = "sha256:eaac91be3119cc7c136b6f375f2d3e092001f717ed6151ccc9d5348c2d6a640c"
+passed_env = []
+# build commands inside of docker container
+container_build_command = [
+    "cargo",
+    "near",
+    "build",
+    "non-reproducible-wasm",
+    "--locked",
+]
+
+
+[dependencies]
+near-sdk = { workspace = true }
+base64 = "0.21.0"
+ecdsa = { version = "0.16", default-features = false, features = ["verifying"] }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["rand_core"] }
+elliptic-curve = { version = "0.13.2", features = ["hash2curve"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
+serde_cbor = "0.11.2"
+serde_json = { workspace = true }
+sha2 = { version = "0.10", default-features = false }
+x509-parser = "0.17.0"
+# Use a lightweight vrf verifier (compatible with vrf-wasm)
+vrf-contract-verifier = { version = "0.8", features = ["near"], default-features = false }
+# Alternatively, use a heavier VRF with WASM support using NEAR based RNG
+# vrf-wasm = { version = "0.8", features = ["near"], default-features = false }
+
+
+# /////////////////////////////////////////////////////////
+# Dev dependencies for native testing environment only.
+# These will NOT be included in the wasm32 contract build.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+near-sdk = { workspace = true }
+near-workspaces = { workspace = true }
+tokio = { workspace = true }
+
+bincode = "1.3.3"
+bs58 = "0.5"
+once_cell = "1.19"
+rand_core = "0.6"
+rand_chacha = "0.3"
+serde_json = { workspace = true }
+sha2 = "0.10"
+# VRF generation for testing, uses getrandom lib for browser WASM compatibility
+# (this library is not included in contract binary,
+vrf-wasm = { version = "0.8", features = ["browser"] }
+
