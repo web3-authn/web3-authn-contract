@@ -7,6 +7,8 @@ use base64::Engine;
 use crate::contract_state::{
     AuthenticatorTransport,
     StoredAuthenticator,
+    UserVerificationPolicy,
+    OriginPolicy,
 };
 use crate::verify_registration_response::{
     RegistrationInfo,
@@ -15,7 +17,6 @@ use crate::verify_registration_response::{
 use crate::types::WebAuthnRegistrationCredential;
 use crate::utils::parsers::{
     decode_client_data_json,
-    extract_rp_id
 };
 
 /////////////////////////////////////
@@ -86,8 +87,9 @@ impl WebAuthnContract {
         device_number: u8,
         registration_info: RegistrationInfo,
         credential: WebAuthnRegistrationCredential,
-        bootstrap_vrf_public_key: Vec<u8>,
-        deterministic_vrf_public_key: Vec<u8>,
+        vrf_public_keys: Vec<Vec<u8>>,
+        origin_policy: OriginPolicy,
+        expected_rp_id: String,
     ) -> VerifyRegistrationResponse {
 
         require!(self.only_sender_or_admin(&account_id), "Must be called by the msg.sender, owner, or admins");
@@ -111,9 +113,6 @@ impl WebAuthnContract {
             None
         };
 
-        // Get current timestamp as ISO string
-        let current_timestamp = env::block_timestamp_ms().to_string();
-
         // Extract origin and RP ID from the registration credential for secure verification
         let (client_data, _) = match decode_client_data_json(&credential.response.client_data_json) {
             Ok(data) => data,
@@ -125,26 +124,28 @@ impl WebAuthnContract {
                 };
             }
         };
+
+        let current_timestamp = env::block_timestamp_ms().to_string();
         let expected_origin = client_data.origin;
-        let expected_rp_id = extract_rp_id(&expected_origin, true, self.tld_config.as_ref());
 
         // Prepare VRF keys for storage
-        let mut vrf_keys = vec![bootstrap_vrf_public_key.clone()];
-        vrf_keys.push(deterministic_vrf_public_key);
-        log!("Storing authenticator with VRF keys for account {}: bootstrap + deterministic", account_id);
+        log!("Storing authenticator with {} VRF keys for account {}", vrf_public_keys.len(), account_id);
         log!("Origin binding: {} -> {}", expected_origin, expected_rp_id);
 
         // Store the authenticator with multiple VRF public keys and origin binding
         self.internal_store_authenticator(
             account_id.clone(),
             credential_id_b64url.clone(),
-            registration_info.credential_public_key.clone(),
-            transports,
-            current_timestamp,
-            vrf_keys,
-            device_number,
-            expected_origin,
-            expected_rp_id,
+            StoredAuthenticator {
+                credential_public_key: registration_info.credential_public_key.clone(),
+                transports: transports,
+                registered: current_timestamp,
+                expected_rp_id: expected_rp_id,
+                origin_policy: origin_policy,
+                user_verification: UserVerificationPolicy::Preferred,
+                vrf_public_keys: vrf_public_keys, // Store all VRF keys
+                device_number,   // Store device number
+            }
         );
 
         // 2. Register user in user registry if not already registered
@@ -166,26 +167,8 @@ impl WebAuthnContract {
         &mut self,
         user_id: AccountId,
         credential_id: String,
-        credential_public_key: Vec<u8>,
-        transports: Option<Vec<AuthenticatorTransport>>,
-        registered: String,
-        vrf_public_keys: Vec<Vec<u8>>, // Changed from single key to vector of keys
-        device_number: u8, // Device number for this authenticator
-        expected_origin: String, // Origin URL where this authenticator was registered
-        expected_rp_id: String, // RP ID where this authenticator was registered
+        authenticator: StoredAuthenticator,
     ) -> bool {
-
-        let vrf_count = vrf_public_keys.len();
-        let authenticator = StoredAuthenticator {
-            credential_public_key,
-            transports,
-            registered,
-            vrf_public_keys, // Store all VRF keys
-            device_number,   // Store device number
-            expected_origin, // Store expected origin for verification
-            expected_rp_id,  // Store expected RP ID for verification
-        };
-
         // Check if user's authenticator map exists, if not create it
         if !self.authenticators.contains_key(&user_id) {
             // Create new IterableMap with a unique storage key based on user_id
@@ -193,16 +176,13 @@ impl WebAuthnContract {
             let new_map = IterableMap::new(storage_key_bytes);
             self.authenticators.insert(user_id.clone(), new_map);
         }
-
         // Insert the authenticator into the user's map
         if let Some(user_authenticators) = self.authenticators.get_mut(&user_id) {
             user_authenticators.insert(credential_id.clone(), authenticator);
         }
-
         // Update credential->user mapping for account recovery
         self.credential_to_users.insert(credential_id, user_id.clone());
-        log!("Stored authenticator for user {} with {} VRF key(s)", user_id, vrf_count);
-
+        log!("Stored authenticator for user {}", user_id);
         true
     }
 }

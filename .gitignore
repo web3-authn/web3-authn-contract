@@ -2,6 +2,10 @@
 .env
 **/.env
 **/.env.*
+migration/.env
+web3-authn-contract/.env
+
+migration/backups/*
 
 # Build output
 target

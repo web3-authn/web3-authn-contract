@@ -27,10 +27,7 @@ pub async fn get_or_deploy_contract() -> near_workspaces::Contract {
         // Initialize contract with default settings
         let _init_result = contract
             .call("init")
-            .args_json(json!({
-                "vrf_settings": null,
-                "tld_config": null
-            }))
+            .args_json(json!({}))
             .gas(Gas::from_tgas(100))
             .transact()
             .await.expect("Failed to initialize contract");
@@ -42,5 +39,25 @@ pub async fn get_or_deploy_contract() -> near_workspaces::Contract {
     // Store the contract for future use
     *CONTRACT.lock().unwrap() = Some(contract.clone());
 
+    contract
+}
+
+pub async fn deploy_new_contract() -> near_workspaces::Contract {
+    // Deploy contract (this will only happen once due to the Once)
+    let contract_wasm = near_workspaces::compile_project("./").await.expect("Failed to compile project");
+    let sandbox = near_workspaces::sandbox().await.expect("Failed to create sandbox");
+    let contract = sandbox.dev_deploy(&contract_wasm).await.expect("Failed to deploy contract");
+
+    // Initialize contract with default settings
+    let _init_result = contract
+        .call("init")
+        .args_json(json!({
+            "vrf_settings": null,
+        }))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await.expect("Failed to initialize contract");
+
+    println!("Shared contract deployed and initialized successfully");
     contract
 }

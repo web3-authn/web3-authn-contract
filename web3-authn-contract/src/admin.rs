@@ -1,8 +1,8 @@
 use near_sdk::{log, near,  env, require, AccountId};
-use crate::{WebAuthnContract, WebAuthnContractExt};
 use crate::contract_state::{
-    TldConfiguration,
-    VRFSettings
+    WebAuthnContract,
+    WebAuthnContractExt,
+    VRFSettings,
 };
 
 /////////////////////////////////////
@@ -37,9 +37,7 @@ impl WebAuthnContract {
     /// Add a new admin (only contract owner can call this)
     pub fn add_admin(&mut self, admin_id: AccountId) -> bool {
         let predecessor = env::predecessor_account_id();
-        let contract_account = env::current_account_id();
-
-        if predecessor != contract_account {
+        if predecessor != self.owner {
             env::panic_str("Only the contract owner can add admins");
         }
 
@@ -56,9 +54,8 @@ impl WebAuthnContract {
     /// Remove an admin (only contract owner can call this)
     pub fn remove_admin(&mut self, admin_id: AccountId) -> bool {
         let predecessor = env::predecessor_account_id();
-        let contract_account = env::current_account_id();
 
-        if predecessor != contract_account {
+        if predecessor != self.owner {
             env::panic_str("Only the contract owner can remove admins");
         }
 
@@ -82,20 +79,46 @@ impl WebAuthnContract {
         self.admins.iter().cloned().collect()
     }
 
-    /// Get current VRF settings
-    pub fn get_vrf_settings(&self) -> VRFSettings {
-        self.vrf_settings.clone()
+    /// Get VRF settings
+    pub fn get_vrf_settings(&self) -> &VRFSettings {
+        &self.vrf_settings
     }
 
-    /// Set VRF settings (only contract owner can call this)
-    pub fn set_vrf_settings(&mut self, settings: VRFSettings) {
+    /// Set VRF settings (admin only)
+    pub fn set_vrf_settings(&mut self, vrf_settings: VRFSettings) {
         self.only_admin();
-        self.vrf_settings = settings;
-        log!("VRF settings updated");
+        self.vrf_settings = vrf_settings;
+        log!("VRF settings updated successfully");
     }
 
-    /// Get current TLD configuration
-    pub fn get_tld_config(&self) -> Option<&TldConfiguration> {
-        self.tld_config.as_ref()
+    /// Get contract owner
+    pub fn get_owner(&self) -> &AccountId {
+        &self.owner
+    }
+
+        /// Transfer contract ownership (only current owner can call this)
+    pub fn transfer_ownership(&mut self, new_owner: AccountId) -> bool {
+        let predecessor = env::predecessor_account_id();
+
+        if predecessor != self.owner {
+            env::panic_str("Only the contract owner can transfer ownership");
+        }
+
+        if new_owner == self.owner {
+            log!("New owner is the same as current owner");
+            return false;
+        }
+
+        let old_owner = self.owner.clone();
+        self.owner = new_owner.clone();
+
+        // Add the new owner as an admin if they're not already one
+        if !self.admins.contains(&new_owner) {
+            self.admins.insert(new_owner.clone());
+            log!("New owner {} added as admin", new_owner);
+        }
+
+        log!("Ownership transferred from {} to {}", old_owner, new_owner);
+        true
     }
 }

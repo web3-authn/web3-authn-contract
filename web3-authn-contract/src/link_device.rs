@@ -136,7 +136,7 @@ mod tests {
         testing_env!(context.build());
 
         // Create contract instance
-        let mut contract = WebAuthnContract::init(None, None);
+        let mut contract = WebAuthnContract::init();
 
         // Test invalid public key format
         let invalid_key = "invalid_public_key_format".to_string();
@@ -156,7 +156,7 @@ mod tests {
         testing_env!(context.build());
 
         // Create contract instance
-        let mut contract = WebAuthnContract::init(None, None);
+        let mut contract = WebAuthnContract::init();
 
         // Test valid device public key
         let device_public_key = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp".to_string();

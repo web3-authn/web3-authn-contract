@@ -2,7 +2,6 @@ use serde_cbor::Value as CborValue;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_ENGINE;
 use base64::Engine;
 use serde_json;
-use crate::contract_state::TldConfiguration;
 
 // WebAuthn client data structure
 #[near_sdk::near(serializers = [json, borsh])]
@@ -157,79 +156,14 @@ pub fn decode_client_data_json(client_data_json_b64url: &str) -> Result<(ClientD
     Ok((client_data, client_data_json_bytes))
 }
 
-/// Extract RP ID from origin with optional parent domain and TLD configuration
+/// Extract RP ID from origin URL
 ///
 /// # Arguments
 /// * `origin` - Origin URL (e.g., "https://app.example.com", "https://app.example.com:8443/login")
-/// * `extract_parent` - If true, extracts parent domain; if false, extracts exact domain
-/// * `tld_config` - Optional TLD configuration for complex domain support
 ///
 /// # Returns
 /// * `String` - Extracted RP ID
-pub fn extract_rp_id(origin: &str, extract_parent: bool, tld_config: Option<&TldConfiguration>) -> String {
-    // Extract domain from URL, handling paths, ports, query strings
-    let domain = extract_domain_from_origin(origin);
-
-    // For exact domain extraction, return as-is
-    if !extract_parent {
-        return domain;
-    }
-
-    // Handle localhost and IP addresses (no subdomain extraction)
-    if domain.starts_with("localhost") || domain.parse::<std::net::IpAddr>().is_ok() {
-        return domain;
-    }
-
-    // Split by dots and extract parent domain
-    let parts: Vec<&str> = domain.split('.').collect();
-
-    if parts.len() < 2 {
-        return domain;
-    }
-
-    // Validate domain parts (basic sanity check)
-    if !is_valid_domain_parts(&parts) {
-        return domain; // Return as-is if invalid format
-    }
-
-    // Determine how many parts make up the registrable domain
-    let registrable_parts = if let Some(config) = tld_config {
-        if config.enabled {
-            // Check for multi-part TLDs
-            if parts.len() >= 3 {
-                let tld = parts[parts.len() - 1];
-                let second_level = parts[parts.len() - 2];
-
-                for (sld, tld_part) in &config.multi_part_tlds {
-                    if second_level == sld && tld == tld_part {
-                        return if parts.len() > 3 {
-                            // Extract parent domain for subdomain
-                            let start_idx = parts.len() - 3;
-                            parts[start_idx..].join(".")
-                        } else {
-                            // Already a registrable domain
-                            domain
-                        };
-                    }
-                }
-            }
-        }
-        2 // Default to standard TLD
-    } else {
-        2 // Default: standard commercial TLD (domain.com)
-    };
-
-    // Extract the registrable domain (parent domain for subdomains)
-    if parts.len() > registrable_parts {
-        let start_idx = parts.len() - registrable_parts;
-        parts[start_idx..].join(".")
-    } else {
-        domain
-    }
-}
-
-/// Extract domain from origin URL, handling paths, ports, query strings
-fn extract_domain_from_origin(origin: &str) -> String {
+pub fn extract_rp_id(origin: &str) -> String {
     // Remove protocol
     let without_protocol = origin
         .strip_prefix("https://")
@@ -257,24 +191,51 @@ fn extract_domain_from_origin(origin: &str) -> String {
     domain_with_port.to_string()
 }
 
-/// Basic validation for domain parts
-fn is_valid_domain_parts(parts: &[&str]) -> bool {
-    for part in parts {
-        if part.is_empty() {
-            return false; // Empty parts like "app..com"
-        }
+/// Extract RP ID from WebAuthn registration data
+/// First tries to get rpId from client data, falls back to origin hostname
+///
+/// # Arguments
+/// * `webauthn_registration` - WebAuthn registration credential
+///
+/// # Returns
+/// * `Result<String, String>` - Extracted RP ID or error message
+pub fn extract_rp_id_and_origin_from_webauthn(
+    webauthn_registration: &crate::types::WebAuthnRegistrationCredential,
+) -> Result<(String, String), String> {
+    // Decode clientDataJSON from base64url
+    let client_data_json = BASE64_URL_ENGINE
+        .decode(&webauthn_registration.response.client_data_json)
+        .map_err(|_| "Failed to decode client data JSON".to_string())?;
 
-        // Check for valid ASCII alphanumerics, hyphens, and basic format
-        if !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            return false;
-        }
+    let client_data_str = String::from_utf8(client_data_json)
+        .map_err(|_| "Invalid UTF-8 in client data JSON".to_string())?;
 
-        // Cannot start or end with hyphen
-        if part.starts_with('-') || part.ends_with('-') {
-            return false;
-        }
-    }
-    true
+    let client_data: serde_json::Value = serde_json::from_str(&client_data_str)
+        .map_err(|_| "Failed to parse client data JSON".to_string())?;
+
+    // Extract origin
+    let origin = client_data
+        .get("origin")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Origin missing from clientDataJSON".to_string())?
+        .to_string();
+
+    // Derive rp_id from the origin (strip https:// and port, if present)
+    let rp_id = extract_rp_id_from_origin(&origin)?;
+
+    Ok((rp_id, origin))
+}
+
+pub fn extract_rp_id_from_origin(origin: &str) -> Result<String, String> {
+    let origin = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+        .ok_or_else(|| "Invalid origin scheme (must be https)".to_string())?;
+
+    // Remove port, if present
+    let rp_id = origin.split(':').next().unwrap_or(origin);
+
+    Ok(rp_id.to_string())
 }
 
 ////////////////////////////
@@ -288,29 +249,29 @@ mod tests {
     #[test]
     fn test_extract_rp_id_parent_domains() {
         // Test standard commercial domain subdomain extraction
-        assert_eq!(extract_rp_id("https://app.example.com", true, None), "example.com");
-        assert_eq!(extract_rp_id("https://wallet.example.com", true, None), "example.com");
-        assert_eq!(extract_rp_id("https://api.wallet.example.com", true, None), "example.com");
+        assert_eq!(extract_rp_id("https://app.example.com"), "app.example.com");
+        assert_eq!(extract_rp_id("https://wallet.example.com"), "wallet.example.com");
+        assert_eq!(extract_rp_id("https://api.wallet.example.com"), "api.wallet.example.com");
 
         // Test different TLDs
-        assert_eq!(extract_rp_id("https://app.company.org", true, None), "company.org");
-        assert_eq!(extract_rp_id("https://portal.business.net", true, None), "business.net");
-        assert_eq!(extract_rp_id("https://api.service.io", true, None), "service.io");
+        assert_eq!(extract_rp_id("https://app.company.org"), "app.company.org");
+        assert_eq!(extract_rp_id("https://portal.business.net"), "portal.business.net");
+        assert_eq!(extract_rp_id("https://api.service.io"), "api.service.io");
 
         // Test parent domain (no change)
-        assert_eq!(extract_rp_id("https://example.com", true, None), "example.com");
-        assert_eq!(extract_rp_id("https://company.org", true, None), "company.org");
+        assert_eq!(extract_rp_id("https://example.com"), "example.com");
+        assert_eq!(extract_rp_id("https://company.org"), "company.org");
 
         // Test localhost (no change)
-        assert_eq!(extract_rp_id("https://localhost:3000", true, None), "localhost:3000");
-        assert_eq!(extract_rp_id("http://localhost", true, None), "localhost");
+        assert_eq!(extract_rp_id("https://localhost:3000"), "localhost:3000");
+        assert_eq!(extract_rp_id("http://localhost"), "localhost");
 
         // Test without protocol
-        assert_eq!(extract_rp_id("app.example.com", true, None), "example.com");
-        assert_eq!(extract_rp_id("example.com", true, None), "example.com");
+        assert_eq!(extract_rp_id("app.example.com"), "app.example.com");
+        assert_eq!(extract_rp_id("example.com"), "example.com");
 
         // Test edge cases
-        assert_eq!(extract_rp_id("domain", true, None), "domain");
+        assert_eq!(extract_rp_id("domain"), "domain");
 
         println!("Parent domain extraction tests passed!");
     }
@@ -318,65 +279,37 @@ mod tests {
     #[test]
     fn test_extract_rp_id_exact_domains() {
         // Test exact domain extraction
-        assert_eq!(extract_rp_id("https://app.example.com", false, None), "app.example.com");
-        assert_eq!(extract_rp_id("https://wallet.example.com", false, None), "wallet.example.com");
-        assert_eq!(extract_rp_id("https://example.com", false, None), "example.com");
-        assert_eq!(extract_rp_id("http://localhost:3000", false, None), "localhost:3000");
+        assert_eq!(extract_rp_id("https://app.example.com"), "app.example.com");
+        assert_eq!(extract_rp_id("https://wallet.example.com"), "wallet.example.com");
+        assert_eq!(extract_rp_id("https://example.com"), "example.com");
+        assert_eq!(extract_rp_id("http://localhost:3000"), "localhost:3000");
 
         // Test URL parsing fixes - paths, ports, query strings
-        assert_eq!(extract_rp_id("https://app.example.com/login", false, None), "app.example.com");
-        assert_eq!(extract_rp_id("https://app.example.com:8443", false, None), "app.example.com:8443");
-        assert_eq!(extract_rp_id("https://app.example.com:8443/api/auth", false, None), "app.example.com:8443");
-        assert_eq!(extract_rp_id("https://app.example.com?token=123", false, None), "app.example.com");
-        assert_eq!(extract_rp_id("https://app.example.com#section", false, None), "app.example.com");
-        assert_eq!(extract_rp_id("https://app.example.com/login?token=123#section", false, None), "app.example.com");
+        assert_eq!(extract_rp_id("https://app.example.com/login"), "app.example.com");
+        assert_eq!(extract_rp_id("https://app.example.com:8443"), "app.example.com:8443");
+        assert_eq!(extract_rp_id("https://app.example.com:8443/api/auth"), "app.example.com:8443");
+        assert_eq!(extract_rp_id("https://app.example.com?token=123"), "app.example.com");
+        assert_eq!(extract_rp_id("https://app.example.com#section"), "app.example.com");
+        assert_eq!(extract_rp_id("https://app.example.com/login?token=123#section"), "app.example.com");
 
         println!("Exact domain extraction tests passed!");
     }
 
     #[test]
-    fn test_tld_configuration() {
-        // Test complex TLD configuration
-        let config = TldConfiguration {
-            enabled: true,
-            multi_part_tlds: vec![
-                ("co".to_string(), "uk".to_string()),
-                ("gov".to_string(), "uk".to_string()),
-                ("com".to_string(), "au".to_string()),
-            ],
-        };
-
-        // Test UK domains
-        assert_eq!(extract_rp_id("https://app.bbc.co.uk", true, Some(&config)), "bbc.co.uk");
-        assert_eq!(extract_rp_id("https://portal.hmrc.gov.uk", true, Some(&config)), "hmrc.gov.uk");
-
-        // Test AU domains
-        assert_eq!(extract_rp_id("https://app.westpac.com.au", true, Some(&config)), "westpac.com.au");
-
-        // Test standard domains still work
-        assert_eq!(extract_rp_id("https://app.example.com", true, Some(&config)), "example.com");
-
-        // Test without TLD config (standard behavior)
-        assert_eq!(extract_rp_id("https://app.bbc.co.uk", true, None), "co.uk");
-
-        println!("TLD configuration tests passed!");
-    }
-
-    #[test]
     fn test_domain_validation_and_edge_cases() {
         // Test valid domains
-        assert_eq!(extract_rp_id("https://valid-domain.com", true, None), "valid-domain.com");
-        assert_eq!(extract_rp_id("https://app.valid-domain.com", true, None), "valid-domain.com");
+        assert_eq!(extract_rp_id("https://valid-domain.com"), "valid-domain.com");
+        assert_eq!(extract_rp_id("https://app.valid-domain.com"), "app.valid-domain.com");
 
         // Test invalid domains (should return as-is, not crash)
-        assert_eq!(extract_rp_id("https://invalid..domain.com", true, None), "invalid..domain.com");
-        assert_eq!(extract_rp_id("https://-invalid.com", true, None), "-invalid.com");
-        assert_eq!(extract_rp_id("https://invalid-.com", true, None), "invalid-.com");
-        assert_eq!(extract_rp_id("https://", true, None), "");
+        assert_eq!(extract_rp_id("https://invalid..domain.com"), "invalid..domain.com");
+        assert_eq!(extract_rp_id("https://-invalid.com"), "-invalid.com");
+        assert_eq!(extract_rp_id("https://invalid-.com"), "invalid-.com");
+        assert_eq!(extract_rp_id("https://"), "");
 
         // Test malformed URLs
-        assert_eq!(extract_rp_id("not-a-url", true, None), "not-a-url");
-        assert_eq!(extract_rp_id("", true, None), "");
+        assert_eq!(extract_rp_id("not-a-url"), "not-a-url");
+        assert_eq!(extract_rp_id(""), "");
 
         println!("Domain validation tests passed!");
     }

@@ -10,18 +10,24 @@ use crate::utils::{
     parsers::{
         parse_attestation_object,
         parse_authenticator_data,
+        extract_rp_id_and_origin_from_webauthn,
     },
     verifiers::verify_attestation_signature,
     validation::{
         validate_webauthn_client_data,
-        validate_webauthn_origin,
+        validate_origin_policy,
+        validate_rp_id,
         validate_webauthn_user_flags,
-        validate_webauthn_rp_id_hash
     },
     vrf_verifier::{
         verify_vrf_and_extract_challenge,
         VRFVerificationData
     },
+};
+use crate::contract_state::{
+    OriginPolicy,
+    UserVerificationPolicy,
+    AuthenticatorOptions,
 };
 
 // WebAuthn verification structures
@@ -75,6 +81,7 @@ impl WebAuthnContract {
         vrf_data: VRFVerificationData,
         webauthn_registration: WebAuthnRegistrationCredential,
         deterministic_vrf_public_key: Vec<u8>,
+        authenticator_options: Option<AuthenticatorOptions>,
     ) -> Promise {
         // Use the attached deposit as the initial balance for the new account
         let initial_balance_yoctonear = env::attached_deposit().as_yoctonear();
@@ -98,7 +105,8 @@ impl WebAuthnContract {
                 "vrf_data": vrf_data,
                 "webauthn_registration": webauthn_registration,
                 "deterministic_vrf_public_key": deterministic_vrf_public_key,
-                // "device_number": 1, defaults to 1 for initial registration
+                "authenticator_options": authenticator_options.unwrap_or(AuthenticatorOptions::default()),
+                "device_number": 1, // defaults to 1 for initial registration
             })).unwrap(),
             NearToken::from_yoctonear(0), // No payment needed for verification
             Gas::from_tgas(30), // 30 TGas should be sufficient (actual usage ~23.4 TGas)
@@ -116,6 +124,7 @@ impl WebAuthnContract {
         vrf_data: VRFVerificationData,
         webauthn_registration: WebAuthnRegistrationCredential,
         deterministic_vrf_public_key: Vec<u8>,
+        authenticator_options: AuthenticatorOptions,
         device_number: Option<u8>,
     ) -> VerifyRegistrationResponse {
 
@@ -129,13 +138,56 @@ impl WebAuthnContract {
             },
         };
 
-        // 2. Verify WebAuthn registration credential
-        // check VRF challenge and RP ID must match WebAuthn registration values
+        // 2. Extract RP ID from WebAuthn registration data
+        let (
+            webauthn_rp_id,
+            webauthn_origin
+        ) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
+            Ok(data) => data,
+            Err(e) => {
+                log!("Failed to extract RP ID from WebAuthn data: {}", e);
+                return VerifyRegistrationResponse {
+                    verified: false,
+                    registration_info: None,
+                };
+            }
+        };
+
+        // Verify that the WebAuthn RP ID matches the VRF RP ID
+        if webauthn_rp_id != vrf_data.rp_id {
+            log!("RP ID mismatch: WebAuthn RP ID '{}' != VRF RP ID '{}'", webauthn_rp_id, vrf_data.rp_id);
+            return VerifyRegistrationResponse {
+                verified: false,
+                registration_info: None,
+            };
+        }
+
+        let user_verification = authenticator_options
+            .user_verification
+            .unwrap_or(UserVerificationPolicy::Preferred);
+
+        let expected_origin_policy = match OriginPolicy::validate(
+            authenticator_options.origin_policy,
+            webauthn_origin,
+            webauthn_rp_id.clone(),
+        ) {
+            Ok(policy) => policy,
+            Err(e) => {
+                log!("{}", e);
+                return VerifyRegistrationResponse {
+                    verified: false,
+                    registration_info: None,
+                };
+            }
+        };
+
+        // 3. Verify WebAuthn registration credential using the extracted RP ID
         let webauthn_result = self.internal_verify_registration_credential(
             webauthn_registration.clone(),
-            vrf_challenge_b64url,   // VRF challenge
-            vrf_data.rp_id.clone(), // VRF RP ID input
-            true,                   // require_user_verification
+            &vrf_challenge_b64url,              // VRF challenge
+            &expected_origin_policy,            // Origin policy
+            &webauthn_rp_id,                    // WebAuthn RP ID
+            user_verification,
         );
 
         // 3. If WebAuthn verification succeeded, store the authenticator and user data
@@ -152,8 +204,12 @@ impl WebAuthnContract {
                     device_num,
                     registration_info,
                     webauthn_registration,
-                    vrf_data.public_key,
-                    deterministic_vrf_public_key,
+                    vec![
+                        vrf_data.public_key,  // bootstrap VRF public key
+                        deterministic_vrf_public_key
+                    ],
+                    expected_origin_policy,
+                    webauthn_rp_id.clone(),
                 );
 
                 log!("VRF WebAuthn registration completed successfully for account: {}", account_id);
@@ -176,6 +232,7 @@ impl WebAuthnContract {
         vrf_data: VRFVerificationData,
         webauthn_registration: WebAuthnRegistrationCredential,
         deterministic_vrf_public_key: Vec<u8>,
+        authenticator_options: Option<AuthenticatorOptions>,
     ) -> VerifyRegistrationResponse {
         let account_id = env::predecessor_account_id();
         // Delegate to the account-specific version
@@ -184,7 +241,8 @@ impl WebAuthnContract {
             vrf_data,
             webauthn_registration,
             deterministic_vrf_public_key,
-            None
+            authenticator_options.unwrap_or(AuthenticatorOptions::default()),
+            None,
         )
     }
 
@@ -196,6 +254,7 @@ impl WebAuthnContract {
         vrf_data: VRFVerificationData,
         webauthn_registration: WebAuthnRegistrationCredential,
         deterministic_vrf_public_key: Vec<u8>,
+        authenticator_options: Option<AuthenticatorOptions>,
     ) -> VerifyRegistrationResponse {
 
         let account_id = env::predecessor_account_id();
@@ -210,6 +269,7 @@ impl WebAuthnContract {
             vrf_data,
             webauthn_registration,
             deterministic_vrf_public_key,
+            authenticator_options.unwrap_or(AuthenticatorOptions::default()),
             Some(next_device_number),
         )
     }
@@ -230,6 +290,7 @@ impl WebAuthnContract {
         &self,
         vrf_data: VRFVerificationData,
         webauthn_registration: WebAuthnRegistrationCredential,
+        authenticator_options: Option<AuthenticatorOptions>,
     ) -> VerifyCanRegisterResponse {
 
         // 1. Check if user exists
@@ -253,13 +314,52 @@ impl WebAuthnContract {
             },
         };
 
-        // 3. WebAuthn registration verification
-        // Check VRF challenge and RP ID matches WebAuthn registration values
+        // 3. Extract RP ID from WebAuthn registration data
+        let (webauthn_rp_id, webauthn_origin) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
+            Ok((rp_id, origin)) => (rp_id, origin),
+            Err(e) => {
+                log!("Failed to extract RP ID from WebAuthn data: {}", e);
+                return VerifyCanRegisterResponse {
+                    verified: false,
+                    user_exists,
+                };
+            }
+        };
+
+        // Verify that the WebAuthn RP ID matches the VRF RP ID
+        if webauthn_rp_id != vrf_data.rp_id {
+            log!("RP ID mismatch: WebAuthn RP ID '{}' != VRF RP ID '{}'", webauthn_rp_id, vrf_data.rp_id);
+            return VerifyCanRegisterResponse {
+                verified: false,
+                user_exists,
+            };
+        }
+
+        let authenticator_options = authenticator_options
+            .unwrap_or(AuthenticatorOptions::default());
+
+        let expected_origin_policy = match OriginPolicy::validate(
+            authenticator_options.origin_policy,
+            webauthn_origin,
+            webauthn_rp_id.clone(),
+        ) {
+            Ok(policy) => policy,
+            Err(e) => {
+                log!("{}", e);
+                return VerifyCanRegisterResponse {
+                    verified: false,
+                    user_exists,
+                };
+            }
+        };
+
+        // 4. WebAuthn registration verification using the extracted RP ID
         let webauthn_response = self.internal_verify_registration_credential(
             webauthn_registration,
-            vrf_challenge_b64url,   // Use the VRF challenge from VRF data
-            vrf_data.rp_id.clone(), // Use the RP ID from VRF data
-            true,                   // require_user_verification
+            &vrf_challenge_b64url,                  // Use the VRF challenge from VRF data
+            &expected_origin_policy,                // origin policy
+            &webauthn_rp_id,                        // WebAuthn RP ID
+            UserVerificationPolicy::default(), // user verification requirement
         );
 
         if webauthn_response.verified {
@@ -279,26 +379,23 @@ impl WebAuthnContract {
     /// # Arguments
     /// * `credential` - The WebAuthn registration credential containing client data and attestation
     /// * `expected_challenge` - Base64URL-encoded VRF-generated challenge that should match client data
-    /// * `expected_origin` - The expected origin URL that should match client data
-    /// * `expected_rp_id` - The expected Relying Party ID that should match attestation data
-    /// * `require_user_verification` - Whether to require user verification flag in attestation
-    /// * `vrf_public_key` - Optional VRF public key to store if this is a VRF registration
+    /// * `origin_policy` - The origin policy for validation
+    /// * `user_verification` - Whether to require user verification flag in attestation
     ///
     /// # Returns
     /// * `VerifyRegistrationResponse` - Contains verification status and registration info
     fn internal_verify_registration_credential(
         &self,
         credential: WebAuthnRegistrationCredential,
-        expected_challenge: String,
-        expected_rp_id: String,
-        require_user_verification: bool,
+        expected_challenge: &str,
+        expected_origin_policy: &OriginPolicy,
+        expected_rp_id: &str,
+        user_verification: UserVerificationPolicy,
     ) -> VerifyRegistrationResponse {
 
-        let expected_origin = format!("https://{}", expected_rp_id);
         log!("Contract verification of registration response");
         log!("Expected challenge: {}", expected_challenge);
-        log!("Expected origin: {}", expected_origin);
-        log!("Expected RP ID: {}", expected_rp_id);
+        log!("Origin policy: {:?}", expected_origin_policy);
 
         // Steps:
         // 1. Parse and validate clientDataJSON
@@ -325,8 +422,12 @@ impl WebAuthnContract {
             }
         };
 
-        // Step 3: Verify origin matches expected pattern
-        if let Err(e) = validate_webauthn_origin(&client_data.origin, &expected_origin, &expected_rp_id, self.tld_config.as_ref()) {
+        // Step 3: Verify origin against policy
+        if let Err(e) = validate_origin_policy(
+            &client_data.origin,
+            &expected_origin_policy,
+            &expected_rp_id
+        ) {
             log!("{}", e);
             return VerifyRegistrationResponse {
                 verified: false,
@@ -374,7 +475,7 @@ impl WebAuthnContract {
                 }
             };
 
-        // Parse authenticator data
+        // Step 5-7: Parse and validate authenticator data (RpID and user presence flags)
         let auth_data = match parse_authenticator_data(&auth_data_bytes) {
             Ok(data) => data,
             Err(e) => {
@@ -386,8 +487,8 @@ impl WebAuthnContract {
             }
         };
 
-        // Verify RP ID hash
-        if let Err(e) = validate_webauthn_rp_id_hash(&auth_data.rp_id_hash, &expected_rp_id) {
+        // Validate RP ID hash
+        if let Err(e) = validate_rp_id(&auth_data.rp_id_hash, &expected_rp_id, true) {
             log!("{}", e);
             return VerifyRegistrationResponse {
                 verified: false,
@@ -395,14 +496,17 @@ impl WebAuthnContract {
             };
         }
 
-        // Check user verification and presence flags
-        if let Err(e) = validate_webauthn_user_flags(auth_data.flags, require_user_verification) {
-            log!("{}", e);
-            return VerifyRegistrationResponse {
-                verified: false,
-                registration_info: None,
-            };
-        }
+        // Validate user verification and presence flags
+        let user_verified = match validate_webauthn_user_flags(auth_data.flags, &user_verification) {
+            Ok(verified) => verified,
+            Err(e) => {
+                log!("{}", e);
+                return VerifyRegistrationResponse {
+                    verified: false,
+                    registration_info: None,
+                };
+            }
+        };
 
         // Verify attested credential data present (AT flag must be set)
         if (auth_data.flags & 0x40) == 0 {
@@ -611,7 +715,7 @@ mod tests {
         // Setup test environment
         let context = get_context_with_seed(42);
         testing_env!(context.build());
-        let mut contract = crate::WebAuthnContract::init(None, None);
+        let mut contract = crate::WebAuthnContract::init();
 
         // Create mock VRF data
         let mock_vrf = MockVRFData::create_mock();
@@ -650,6 +754,10 @@ mod tests {
             vrf_data,
             webauthn_registration,
             deterministic_vrf_public_key,
+            Some(AuthenticatorOptions {
+                user_verification: Some(UserVerificationPolicy::Required),
+                origin_policy: Some(crate::contract_state::OriginPolicyInput::AllSubdomains),
+            }),
         );
 
         // The result should fail VRF verification (expected with mock data)
@@ -747,7 +855,7 @@ mod tests {
     fn test_create_account_and_register_user() {
         let context = get_context_with_seed(42);
         testing_env!(context.build());
-        let mut contract = crate::WebAuthnContract::init(None, None);
+        let mut contract = crate::WebAuthnContract::init();
 
         let new_account_id: AccountId = "new_account.testnet".parse().unwrap();
         let new_public_key: PublicKey = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp".parse().unwrap();
@@ -775,6 +883,10 @@ mod tests {
             vrf_data,
             webauthn_registration,
             vec![1u8; 32], // Mock deterministic VRF public key
+            Some(AuthenticatorOptions {
+                user_verification: Some(UserVerificationPolicy::Required),
+                origin_policy: Some(crate::contract_state::OriginPolicyInput::AllSubdomains),
+            }),
         );
 
         // In test environment, promises are not actually executed

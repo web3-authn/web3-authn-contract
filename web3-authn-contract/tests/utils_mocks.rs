@@ -142,8 +142,8 @@ pub fn create_mock_webauthn_registration(
 
     let origin = format!("https://{}", rp_id);
     let client_data = format!(
-        r#"{{"type":"webauthn.create","challenge":"{}","origin":"{}","crossOrigin":false}}"#,
-        challenge_b64, origin
+        r#"{{"type":"webauthn.create","challenge":"{}","origin":"{}","rpId":"{}","crossOrigin":false}}"#,
+        challenge_b64, origin, rp_id
     );
     let client_data_b64 = BASE64_URL_ENGINE.encode(client_data.as_bytes());
 
@@ -214,8 +214,8 @@ pub fn create_mock_webauthn_authentication(vrf_output: &[u8], rp_id: &str) -> se
 
     let origin = format!("https://{}", rp_id);
     let client_data = format!(
-        r#"{{"type":"webauthn.get","challenge":"{}","origin":"{}","crossOrigin":false}}"#,
-        challenge_b64, origin
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"{}","rpId":"{}","crossOrigin":false}}"#,
+        challenge_b64, origin, rp_id
     );
     let client_data_b64 = BASE64_URL_ENGINE.encode(client_data.as_bytes());
 

@@ -6,6 +6,7 @@ mod contract_state;
 mod link_device;
 mod verify_authentication_response;
 mod verify_registration_response;
+// mod migrations;
 
 use near_sdk::{env, log, near};
 use near_sdk::store::{LookupMap, IterableSet};
@@ -20,10 +21,11 @@ use contract_state::WebAuthnContractExt;
 pub use contract_state::{
     WebAuthnContract,
     VRFSettings,
-    TldConfiguration,
     StoredAuthenticator,
     StorageKey,
     AuthenticatorTransport,
+    UserVerificationPolicy,
+    OriginPolicy,
 };
 pub use verify_registration_response::{
     VerifyRegistrationResponse,
@@ -38,36 +40,33 @@ pub use verify_registration_response::{
 impl WebAuthnContract {
 
     #[init]
-    pub fn init(
-        vrf_settings: Option<VRFSettings>,
-        tld_config: Option<TldConfiguration>
-    ) -> Self {
-        Self {
-            greeting: "Hello".to_string(),
-            vrf_settings: vrf_settings.unwrap_or_default(),
-            tld_config: tld_config,
+    pub fn init() -> Self {
+        let owner = env::predecessor_account_id();
+        let mut contract = Self {
+            contract_version: 4,
+            greeting: Some("Hello".to_string()),
+            owner: owner.clone(),
+            vrf_settings: VRFSettings::default(),
             admins: IterableSet::new(StorageKey::Admins),
             authenticators: LookupMap::new(StorageKey::Authenticators),
             registered_users: IterableSet::new(StorageKey::RegisteredUsers),
             credential_to_users: LookupMap::new(StorageKey::CredentialToUsers),
             device_numbers: LookupMap::new(StorageKey::AccountDeviceCounters),
             device_linking_map: LookupMap::new(StorageKey::DeviceLinkingMap),
-        }
+        };
+        // Add contract deployer as an admin
+        contract.admins.insert(owner);
+
+        contract
     }
 
-    ///////////////////////////////////////////////////
-    // Main WebAuthn registration and verification functions are in:
-    // - verify_registration_response.rs
-    // - verify_authentication_response.rs
-    ///////////////////////////////////////////////////
-
-    pub fn get_greeting(&self) -> String {
+    pub fn get_greeting(&self) -> Option<String> {
         self.greeting.clone()
     }
 
     pub fn set_greeting(&mut self, greeting: String) {
         log!("Saving greeting: {}", greeting);
-        self.greeting = greeting;
+        self.greeting = Some(greeting);
     }
 
     /// Get contract state statistics (view function)
@@ -86,13 +85,14 @@ impl WebAuthnContract {
         let storage_usage = env::storage_usage();
 
         serde_json::json!({
+            "contract_version": self.contract_version,
+            "owner": self.owner,
             "registered_users_count": self.registered_users.len(),
             "authenticator_entries_count": total_authenticators,
             "total_credential_ids": total_credential_ids,
             "admins_count": self.admins.len(),
             "storage_usage": storage_usage,
             "vrf_settings": self.vrf_settings,
-            "tld_config": self.tld_config,
         })
     }
 }
