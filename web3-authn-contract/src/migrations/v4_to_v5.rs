@@ -181,7 +181,6 @@ impl WebAuthnContract {
 
     /// Get current migration status (for offchain tracking)
     pub fn export_migration_data(&self) -> ExportedMigrationData {
-        self.only_admin();
 
         let registered_users: Vec<AccountId> = self.registered_users.iter().map(|id| id.clone()).collect();
         let mut exported_accounts = Vec::new();

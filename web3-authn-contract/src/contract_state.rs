@@ -134,8 +134,11 @@ impl Default for UserVerificationPolicy {
 #[near_sdk::near(serializers = [borsh, json])]
 #[derive(Debug, Clone)]
 pub enum OriginPolicy {
+    #[serde(rename = "single")]
     Single(String),        // allow single origin
+    #[serde(rename = "multiple")]
     Multiple(Vec<String>), // allow multiple pre-specified origins
+    #[serde(rename = "allSubdomains")]
     AllSubdomains,         // allow all sub-domains associated with RpID
 }
 impl Default for OriginPolicy {

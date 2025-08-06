@@ -6,7 +6,7 @@ mod contract_state;
 mod link_device;
 mod verify_authentication_response;
 mod verify_registration_response;
-// mod migrations;
+mod migrations;
 
 use near_sdk::{env, log, near};
 use near_sdk::store::{LookupMap, IterableSet};
