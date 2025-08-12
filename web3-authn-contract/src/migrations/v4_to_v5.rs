@@ -10,6 +10,25 @@ use crate::contract_state::{
     StorageKey
 };
 
+// Backward-compatible OriginPolicy for V4 migration
+#[near_sdk::near(serializers=[borsh, json])]
+#[derive(Debug, Clone)]
+#[serde(untagged)]
+pub enum OriginPolicyV4 {
+    // Old enum format for backward compatibility
+    #[serde(rename = "allSubdomains")]
+    AllSubdomainsOld,
+    // New struct format
+    Struct {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        single: Option<String>,
+        #[serde(rename = "allSubdomains", skip_serializing_if = "Option::is_none")]
+        all_subdomains: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        multiple: Option<Vec<String>>,
+    },
+}
+
 // Old V4 contract structure
 #[near_sdk::near(serializers=[borsh])]
 pub struct WebAuthnContractV4 {
@@ -42,7 +61,7 @@ pub struct StoredAuthenticatorV4 {
     pub transports: Option<Vec<AuthenticatorTransport>>,
     pub registered: String,
     pub expected_rp_id: String,
-    pub origin_policy: OriginPolicy,
+    pub origin_policy: OriginPolicyV4,
     pub user_verification: UserVerificationPolicy,
     pub vrf_public_keys: Vec<Vec<u8>>,
     pub device_number: u8,
@@ -114,19 +133,43 @@ impl WebAuthnContract {
         }
         log!("Total authenticators found in old state: {}", debug_count);
 
+        // Collect registered users for iteration
+        let registered_users: Vec<AccountId> = old_state.registered_users.iter().map(|id| id.clone()).collect();
+
         // Create new V5 contract with migrated data
-        Self {
+        let mut new_contract = Self {
             contract_version: 5,
             greeting: old_state.greeting,
             owner: contract_account, // Contract account becomes owner
             admins: old_state.admins,
             vrf_settings: old_state.vrf_settings,
-            authenticators: LookupMap::new(StorageKey::Authenticators), // Empty initially
+            authenticators: LookupMap::new(StorageKey::Authenticators),
             registered_users: old_state.registered_users,
             credential_to_users: old_state.credential_to_users,
             device_linking_map: old_state.device_linking_map,
             device_numbers: old_state.device_numbers,
+        };
+
+        // Migrate authenticator data from old format to new format
+        for user_id in registered_users.iter() {
+            if let Some(old_user_authenticators) = old_state.authenticators.get(user_id) {
+                // Create new IterableMap for this user
+                let storage_key_bytes = format!("auth_{}", user_id).into_bytes();
+                let mut new_user_authenticators = IterableMap::new(storage_key_bytes);
+
+                // Migrate each authenticator
+                for (credential_id, old_authenticator) in old_user_authenticators.iter() {
+                    let new_authenticator = migrate_authenticator_v4_to_v5(old_authenticator);
+                    new_user_authenticators.insert(credential_id.clone(), new_authenticator);
+                }
+
+                // Store the migrated authenticators
+                new_contract.authenticators.insert(user_id.clone(), new_user_authenticators);
+                log!("Migrated {} authenticators for user {}", old_user_authenticators.len(), user_id);
+            }
         }
+
+        new_contract
     }
 
     /// Migrate authenticators from offchain backup data
@@ -213,14 +256,26 @@ impl WebAuthnContract {
 
 /// Convert V4 StoredAuthenticator to V5 StoredAuthenticator
 fn migrate_authenticator_v4_to_v5(v4_auth: &StoredAuthenticatorV4) -> crate::contract_state::StoredAuthenticator {
-    // V4 to V5 migration - currently no structural changes
-    // This function can be extended for future V5 changes
+    // Convert OriginPolicyV4 to OriginPolicy
+    let origin_policy = match &v4_auth.origin_policy {
+        OriginPolicyV4::AllSubdomainsOld => OriginPolicy {
+            single: None,
+            all_subdomains: Some(true),
+            multiple: None,
+        },
+        OriginPolicyV4::Struct { single, all_subdomains, multiple } => OriginPolicy {
+            single: single.clone(),
+            all_subdomains: *all_subdomains,
+            multiple: multiple.clone(),
+        },
+    };
+
     crate::contract_state::StoredAuthenticator {
         credential_public_key: v4_auth.credential_public_key.clone(),
         transports: v4_auth.transports.clone(),
         registered: v4_auth.registered.clone(),
         expected_rp_id: v4_auth.expected_rp_id.clone(),
-        origin_policy: v4_auth.origin_policy.clone(),
+        origin_policy,
         user_verification: v4_auth.user_verification.clone(),
         vrf_public_keys: v4_auth.vrf_public_keys.clone(),
         device_number: v4_auth.device_number,

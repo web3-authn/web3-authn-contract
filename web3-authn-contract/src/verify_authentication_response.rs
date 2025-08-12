@@ -450,7 +450,11 @@ mod tests {
             transports: Some(vec![crate::contract_state::AuthenticatorTransport::Internal]),
             registered: "1234567890".to_string(),
             expected_rp_id: "testnet".to_string(),
-            origin_policy: OriginPolicy::AllSubdomains,
+            origin_policy: OriginPolicy {
+                single: None,
+                all_subdomains: Some(true),
+                multiple: None
+            },
             user_verification: UserVerificationPolicy::Required,
             vrf_public_keys: vec![vrf_public_key], // Store VRF public key for stateless auth
             device_number: 0,

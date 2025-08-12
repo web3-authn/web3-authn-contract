@@ -42,46 +42,40 @@ pub fn validate_origin_policy(
     }
 
     // Check if client origin is allowed based on policy
-    let origin_allowed = match origin_policy {
-        OriginPolicy::Single(allowed_origin) => {
-            // Allow only the exact origin specified
-            client_origin == allowed_origin
+    let origin_allowed = if let Some(allowed_origin) = &origin_policy.single {
+        client_origin == allowed_origin
+    } else if let Some(allowed_origins) = &origin_policy.multiple {
+        allowed_origins.iter().any(|allowed_origin| client_origin == allowed_origin)
+    } else if origin_policy.all_subdomains.unwrap_or(false) {
+        if !client_origin.contains(expected_rp_id) {
+            return Err(format!(
+                "Credential origin '{}' does not match RP ID '{}'",
+                client_origin, expected_rp_id
+            ));
         }
-        OriginPolicy::Multiple(allowed_origins) => {
-            // Check if origin is in the whitelist
-            allowed_origins.iter().any(|allowed_origin| {
-                client_origin == allowed_origin
-            })
-        }
-        OriginPolicy::AllSubdomains => {
-            // Allow any subdomain of the RP ID
-            if !client_origin.contains(expected_rp_id) {
-                return Err(format!("Credential origin '{}' does not match RP ID '{}'", client_origin, expected_rp_id));
-            }
-            client_origin.ends_with(&expected_rp_id)
-        }
+        client_origin.ends_with(&expected_rp_id)
+    } else {
+        false
     };
 
     if !origin_allowed {
-        match origin_policy {
-            OriginPolicy::Single(allowed_origin) => {
-                return Err(format!(
-                    "Origin '{}' not allowed by strict policy. Expected: {}",
-                    client_origin, allowed_origin
-                ));
-            }
-            OriginPolicy::Multiple(allowed_origins) => {
-                return Err(format!(
-                    "Origin '{}' not in whitelist. Allowed origins: {:?}",
-                    client_origin, allowed_origins
-                ));
-            }
-            OriginPolicy::AllSubdomains => {
-                return Err(format!(
-                    "Origin '{}' not allowed by subdomain policy. Expected RP ID: {}",
-                    client_origin, expected_rp_id
-                ));
-            }
+        if let Some(allowed_origin) = &origin_policy.single {
+            return Err(format!(
+                "Origin '{}' not allowed by strict policy. Expected: {}",
+                client_origin, allowed_origin
+            ));
+        } else if let Some(allowed_origins) = &origin_policy.multiple {
+            return Err(format!(
+                "Origin '{}' not in whitelist. Allowed origins: {:?}",
+                client_origin, allowed_origins
+            ));
+        } else if origin_policy.all_subdomains.unwrap_or(false) {
+            return Err(format!(
+                "Origin '{}' not allowed by subdomain policy. Expected RP ID: {}",
+                client_origin, expected_rp_id
+            ));
+        } else {
+            return Err("Origin policy is not configured".to_string());
         }
     }
 
@@ -177,7 +171,11 @@ mod tests {
 
     #[test]
     fn test_validate_origin_policy() {
-        let policy = OriginPolicy::AllSubdomains;
+        let policy = OriginPolicy {
+            single: None,
+            all_subdomains: Some(true),
+            multiple: None,
+        };
         let expected_rp_id = "example.com";
 
         // Test subdomain matching
@@ -197,7 +195,11 @@ mod tests {
 
     #[test]
     fn test_validate_origin_policy_strict() {
-        let policy = OriginPolicy::Single("https://app.example.com".to_string());
+        let policy = OriginPolicy {
+            single: Some("https://app.example.com".to_string()),
+            all_subdomains: None,
+            multiple: None
+        };
         let expected_rp_id = "app.example.com";
 
         // Test exact match allowed
@@ -210,10 +212,14 @@ mod tests {
 
     #[test]
     fn test_validate_origin_policy_whitelist() {
-        let policy = OriginPolicy::Multiple(vec![
-            "https://app.example.com".to_string(),
-            "https://api.example.com".to_string(),
-        ]);
+        let policy = OriginPolicy {
+            single: None,
+            all_subdomains: None,
+            multiple: Some(vec![
+                "https://app.example.com".to_string(),
+                "https://api.example.com".to_string(),
+            ]),
+        };
         let expected_rp_id = "example.com";
 
         // Test whitelisted origins
