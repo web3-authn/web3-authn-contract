@@ -6,8 +6,6 @@ use tracing::info;
 use near_api::*;
 use crate::near_client::NearClient;
 
-
-
 // Migration progress tracking
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MigrationProgress {
@@ -24,82 +22,6 @@ pub struct ContractMigrationProgress {
     pub migrated_count: u32,
     pub batch_size: u32,
 }
-
-// Authenticator backup data - matches contract's StoredAuthenticatorV4
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AuthenticatorBackup {
-    pub account_id: String,
-    pub credential_id: String,
-    pub authenticator_data: StoredAuthenticatorV4,
-}
-
-// V4 StoredAuthenticator structure - matches contract
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct StoredAuthenticatorV4 {
-    pub credential_public_key: Vec<u8>,
-    pub transports: Option<Vec<AuthenticatorTransport>>,
-    pub registered: String,
-    pub expected_rp_id: String,
-    pub origin_policy: OriginPolicy,
-    pub user_verification: UserVerificationPolicy,
-    pub vrf_public_keys: Vec<Vec<u8>>,
-    pub device_number: u8,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExportedMigrationData {
-    pub contract_version: u32,
-    pub registered_users: Vec<AccountId>,
-    pub exported_accounts: Vec<ExportedAccounts>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ExportedAccounts {
-    pub account_id: AccountId,
-    pub authenticators: Vec<ExportedAuthenticator>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ExportedAuthenticator {
-    pub credential_id: String,
-    pub authenticator: StoredAuthenticatorV4, // StoredAuthenticatorV4 before migration
-}
-
-// Supporting enums to match contract
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum AuthenticatorTransport {
-    #[serde(rename = "usb")]
-    Usb,
-    #[serde(rename = "nfc")]
-    Nfc,
-    #[serde(rename = "ble")]
-    Ble,
-    #[serde(rename = "internal")]
-    Internal,
-    #[serde(rename = "hybrid")]
-    Hybrid,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum UserVerificationPolicy {
-    #[serde(rename = "required")]
-    Required,
-    #[serde(rename = "preferred")]
-    Preferred,
-    #[serde(rename = "discouraged")]
-    Discouraged,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum OriginPolicy {
-    #[serde(rename = "single")]
-    Single(String),
-    #[serde(rename = "multiple")]
-    Multiple(Vec<String>),
-    #[serde(rename = "allSubdomains")]
-    AllSubdomains,
-}
-
 
 // Migration configuration
 #[derive(Debug, Clone)]
@@ -125,7 +47,6 @@ pub struct MigrationManager {
 
 impl MigrationManager {
     pub async fn new(config: MigrationConfig) -> Result<Self> {
-
         let near_client = NearClient::new()
             .map_err(|e| anyhow::anyhow!("Failed to create NearClient: {}", e))?;
 
@@ -138,7 +59,13 @@ impl MigrationManager {
     /// Create comprehensive backup of contract state
     pub async fn backup_exported_migration_data(&self) -> Result<ExportedMigrationData> {
         info!("Creating backup for contract");
-        let exported_migration_data = self.export_migration_data().await?;
+        let result: Data<ExportedMigrationData> = self.near_client.call(
+            "export_migration_data",
+            serde_json::json!({})
+        ).await
+        .map_err(|e| anyhow::anyhow!("Failed to get contract state: {}", e))?;
+
+        let exported_migration_data = result.data;
         info!(
             "Contract state: {} registered users, {} authenticators",
             exported_migration_data.registered_users.len(),
@@ -165,8 +92,7 @@ impl MigrationManager {
         }
     }
 
-
-        pub async fn migrate_authenticator_batch_from_file(&self, backup_file: String) -> Result<Vec<ContractMigrationProgress>> {
+    pub async fn migrate_authenticator_batch_from_file(&self, backup_file: String) -> Result<Vec<ContractMigrationProgress>> {
         info!("Loading exported migration data from backup file: {}", backup_file);
 
         // Determine the full path to the backup file
@@ -203,7 +129,7 @@ impl MigrationManager {
             let batch_num = batch_num + 1; // 1-indexed batch numbers
             info!("Processing batch {}/{} with {} accounts", batch_num, total_batches, chunk.len());
 
-                        // Call migrate_authenticator_batch for this chunk
+            // Call migrate_authenticator_batch for this chunk
             let result = self.migrate_authenticator_batch(chunk.to_vec()).await?;
             let migrated_count = result.migrated_count;
             all_results.push(result);
@@ -226,7 +152,6 @@ impl MigrationManager {
 
     // Helper methods
     async fn migrate_authenticator_batch(&self, exported_accounts: Vec<ExportedAccounts>) -> Result<ContractMigrationProgress> {
-
         info!("Migrating {} accounts with {} authenticators", exported_accounts.len(), exported_accounts.iter().map(|account| account.authenticators.len() as u32).sum::<u32>());
 
         // Use near_client to call the function with transaction
@@ -238,10 +163,7 @@ impl MigrationManager {
         ).await
         .map_err(|e| anyhow::anyhow!("Failed to call migrate_authenticator_batch: {}", e))?;
 
-        // For now, just return success - the transaction was sent successfully
-        // TODO: Extract return value from transaction result if needed
         info!("Transaction sent successfully");
-
         // Return a default progress for now
         Ok(ContractMigrationProgress {
             migrated_authenticators: vec![],
@@ -249,16 +171,24 @@ impl MigrationManager {
             batch_size: exported_accounts.len() as u32,
         })
     }
-
-    async fn export_migration_data(&self) -> Result<ExportedMigrationData> {
-        let result: Data<ExportedMigrationData> = self.near_client.call(
-            "export_migration_data",
-            serde_json::json!({})
-        ).await
-        .map_err(|e| anyhow::anyhow!("Failed to get contract state: {}", e))?;
-
-        Ok(result.data)
-    }
 }
 
+// Generic exported migration data structure
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExportedMigrationData {
+    pub contract_version: u32,
+    pub registered_users: Vec<AccountId>,
+    pub exported_accounts: Vec<ExportedAccounts>,
+}
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExportedAccounts {
+    pub account_id: AccountId,
+    pub authenticators: Vec<ExportedAuthenticator>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExportedAuthenticator {
+    pub credential_id: String,
+    pub authenticator: serde_json::Value, // Generic authenticator data
+}

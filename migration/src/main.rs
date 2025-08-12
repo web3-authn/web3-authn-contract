@@ -2,9 +2,11 @@ use clap::{Parser, Subcommand};
 use anyhow::Result;
 use tracing::info;
 
-mod v4_to_v5;
-use v4_to_v5::{MigrationManager, MigrationConfig};
 mod near_client;
+mod migration_manager;
+mod v5_to_v6;
+
+use migration_manager::{MigrationManager, MigrationConfig};
 
 
 #[derive(Parser)]
