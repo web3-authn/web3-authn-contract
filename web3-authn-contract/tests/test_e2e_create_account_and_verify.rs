@@ -58,7 +58,7 @@ async fn test_create_account_and_register_user_e2e() -> Result<(), Box<dyn std::
             "deterministic_vrf_public_key": deterministic_vrf_public_key,
             "authenticator_options": {
                 "user_verification": "required",
-                "origin_policy": "single"
+                "origin_policy": { "single": true }
             }
         }))
         .gas(Gas::from_tgas(ACCOUNT_CREATION_GAS_LIMIT)) // More gas for account creation
@@ -185,7 +185,7 @@ async fn test_vrf_registration_all_subdomains_policy() -> Result<(), Box<dyn std
             "deterministic_vrf_public_key": deterministic_vrf_public_key,
             "authenticator_options": {
                 "user_verification": "discouraged",
-                "origin_policy": "allSubdomains"
+                "origin_policy": { "allSubdomains": true }
             }
         }))
         .gas(Gas::from_tgas(ACCOUNT_CREATION_GAS_LIMIT))

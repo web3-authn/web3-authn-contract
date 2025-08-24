@@ -756,7 +756,11 @@ mod tests {
             deterministic_vrf_public_key,
             Some(AuthenticatorOptions {
                 user_verification: Some(UserVerificationPolicy::Required),
-                origin_policy: Some(crate::contract_state::OriginPolicyInput::AllSubdomains),
+                origin_policy: Some(crate::contract_state::OriginPolicyInput {
+                    single: None,
+                    all_subdomains: Some(true),
+                    multiple: None,
+                }),
             }),
         );
 
@@ -885,7 +889,11 @@ mod tests {
             vec![1u8; 32], // Mock deterministic VRF public key
             Some(AuthenticatorOptions {
                 user_verification: Some(UserVerificationPolicy::Required),
-                origin_policy: Some(crate::contract_state::OriginPolicyInput::AllSubdomains),
+                origin_policy: Some(crate::contract_state::OriginPolicyInput {
+                    single: None,
+                    all_subdomains: Some(true),
+                    multiple: None,
+                }),
             }),
         );
 

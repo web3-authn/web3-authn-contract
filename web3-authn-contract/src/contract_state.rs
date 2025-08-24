@@ -58,12 +58,14 @@ pub enum AuthenticatorTransport {
 /// # JSON Format
 /// ```json
 /// {
-///   "user_verification": "Required" | "Preferred" | "Discouraged" | null,
+///   "user_verification": "required" | "preferred" | "discouraged" | null,
 ///   "origin_policy": {
-///     "Single": null
+///     "single": true
 ///   } | {
-///     "Multiple": ["sub.example.com", "api.example.com"]
-///   } | "AllSubdomains" | null
+///     "multiple": ["sub.example.com", "api.example.com"]
+///   } | {
+///     "allSubdomains": true
+///   } | null
 /// }
 /// ```
 ///
@@ -72,9 +74,9 @@ pub enum AuthenticatorTransport {
 /// ## Require user verification with multiple allowed origins:
 /// ```json
 /// {
-///   "user_verification": "Required",
+///   "user_verification": "required",
 ///   "origin_policy": {
-///     "Multiple": ["app.example.com", "admin.example.com"]
+///     "multiple": ["app.example.com", "admin.example.com"]
 ///   }
 /// }
 /// ```
@@ -82,8 +84,8 @@ pub enum AuthenticatorTransport {
 /// ## Preferred user verification with all subdomains allowed:
 /// ```json
 /// {
-///   "user_verification": "Preferred",
-///   "origin_policy": "AllSubdomains"
+///   "user_verification": "preferred",
+///   "origin_policy": { "allSubdomains": true }
 /// }
 /// ```
 ///
@@ -97,7 +99,9 @@ pub enum AuthenticatorTransport {
 #[near_sdk::near(serializers = [borsh, json])]
 #[derive(Debug, Clone)]
 pub struct AuthenticatorOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_verification: Option<UserVerificationPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_policy: Option<OriginPolicyInput>,
 }
 impl Default for AuthenticatorOptions {
@@ -133,17 +137,21 @@ impl Default for UserVerificationPolicy {
 
 #[near_sdk::near(serializers = [borsh, json])]
 #[derive(Debug, Clone)]
-pub enum OriginPolicy {
-    #[serde(rename = "single")]
-    Single(String),        // allow single origin
-    #[serde(rename = "multiple")]
-    Multiple(Vec<String>), // allow multiple pre-specified origins
-    #[serde(rename = "allSubdomains")]
-    AllSubdomains,         // allow all sub-domains associated with RpID
+pub struct OriginPolicy {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub single: Option<String>,
+    #[serde(rename = "allSubdomains", skip_serializing_if = "Option::is_none")]
+    pub all_subdomains: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiple: Option<Vec<String>>,
 }
 impl Default for OriginPolicy {
     fn default() -> Self {
-        Self::AllSubdomains
+        Self {
+            single: None,
+            all_subdomains: Some(true),
+            multiple: None
+        }
     }
 }
 impl OriginPolicy {
@@ -152,30 +160,37 @@ impl OriginPolicy {
         credential_origin: String,
         rp_id: String,
     ) -> Result<Self, String> {
-        let o = match origin_policy_input {
-            Some(OriginPolicyInput::Single) => {
-                // Validate that credential_origin ends with rp_id
-                if !credential_origin.ends_with(&rp_id) {
-                    return Err(format!("Credential origin '{}' does not match RP ID '{}'", credential_origin, rp_id));
-                }
-                Self::Single(credential_origin)
-            },
-            Some(OriginPolicyInput::Multiple(origins)) => {
-                let all_origins = [vec![credential_origin], origins].concat();
-                // Validate that each origin in origins ends with rp_id
-                for origin in &all_origins {
-                    if !origin.ends_with(&rp_id) {
-                        return Err(format!("Origin '{}' does not match RP ID '{}'", origin, rp_id));
+        let origin_policy = match origin_policy_input {
+            Some(input) => {
+                input.validate_exclusive()?;
+                let single_set = input.single.unwrap_or(false);
+                let all_subdomains_set = input.all_subdomains.unwrap_or(false);
+                if single_set {
+                    if !credential_origin.ends_with(&rp_id) {
+                        return Err(format!(
+                            "Credential origin '{}' does not match RP ID '{}'",
+                            credential_origin, rp_id
+                        ));
                     }
+                    Self { single: Some(credential_origin), all_subdomains: None, multiple: None }
+                } else if all_subdomains_set {
+                    Self { single: None, all_subdomains: Some(true), multiple: None }
+                } else if let Some(origins) = input.multiple {
+                    let all_origins = [vec![credential_origin], origins].concat();
+                    for origin in &all_origins {
+                        if !origin.ends_with(&rp_id) {
+                            return Err(format!("Origin '{}' does not match RP ID '{}'", origin, rp_id));
+                        }
+                    }
+                    Self { single: None, all_subdomains: None, multiple: Some(all_origins) }
+                } else {
+                    // Unreachable due to set_count check
+                    return Err("Invalid OriginPolicyInput".to_string());
                 }
-                Self::Multiple(all_origins)
-            },
-            Some(OriginPolicyInput::AllSubdomains) => {
-                Self::AllSubdomains
-            },
-            None => Self::default(), // Defaults to all subdomains
+            }
+            None => Self::default(),
         };
-        Ok(o)
+        Ok(origin_policy)
     }
 }
 
@@ -183,45 +198,36 @@ impl OriginPolicy {
 ///
 /// # JSON Format
 /// ```json
-/// "single" | {
-///   "multiple": ["sub.example.com", "api.example.com"]
-/// } | "allSubdomains"
+/// { "single": true } | { "multiple": ["sub.example.com", "api.example.com"] } | { "allSubdomains": true }
 /// ```
 ///
-/// # Examples
-///
-/// ## Single origin (uses credential.origin):
-/// ```json
-/// "single"
-/// ```
-///
-/// ## Multiple allowed origins (additional to credential.origin):
-/// ```json
-/// {
-///   "multiple": ["sub.example.com", "api.example.com"]
-/// }
-/// ```
-///
-/// ## Allow all subdomains of RP ID:
-/// ```json
-/// "allSubdomains"
-/// ```
-///
-/// # Notes
-/// - `single` uses the credential's origin as the only allowed origin
-/// - `multiple` adds additional origins to the credential's origin
-/// - `allSubdomains` allows any subdomain of the RP ID
-/// - This is converted to `OriginPolicy` during registration
-/// - The `multiple` variant stores domain names (without protocol)
+/// Exactly one of the fields must be set.
 #[near_sdk::near(serializers = [borsh, json])]
 #[derive(Debug, Clone)]
-pub enum OriginPolicyInput {
-    #[serde(rename = "single")]
-    Single,                // uses credential.origin as the origin
-    #[serde(rename = "multiple")]
-    Multiple(Vec<String>), // allow multiple pre-specified origins
-    #[serde(rename = "allSubdomains")]
-    AllSubdomains,         // allow all sub-domains associated with RpID
+pub struct OriginPolicyInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub single: Option<bool>,
+    #[serde(rename = "allSubdomains", default, skip_serializing_if = "Option::is_none")]
+    pub all_subdomains: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiple: Option<Vec<String>>,
+}
+
+impl OriginPolicyInput {
+    pub fn validate_exclusive(&self) -> Result<(), String> {
+        let single_set = self.single.unwrap_or(false);
+        let all_subdomains_set = self.all_subdomains.unwrap_or(false);
+        let multiple_set = self
+            .multiple
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let set_count = (single_set as u8) + (all_subdomains_set as u8) + (multiple_set as u8);
+        if set_count != 1 {
+            return Err("OriginPolicyInput must have exactly one of 'single', 'allSubdomains', or 'multiple' set".to_string());
+        }
+        Ok(())
+    }
 }
 
 
@@ -281,10 +287,14 @@ mod tests {
         // Test complex AuthenticatorOptions with all variants
         let options = AuthenticatorOptions {
             user_verification: Some(UserVerificationPolicy::Required),
-            origin_policy: Some(OriginPolicyInput::Multiple(vec![
-                "sub.example.com".to_string(),
-                "api.example.com".to_string(),
-            ])),
+            origin_policy: Some(OriginPolicyInput {
+                single: None,
+                all_subdomains: None,
+                multiple: Some(vec![
+                    "sub.example.com".to_string(),
+                    "api.example.com".to_string(),
+                ]),
+            }),
         };
 
         let json_str = serde_json::to_string(&options).unwrap();
@@ -295,12 +305,13 @@ mod tests {
         // Verify all fields are correctly deserialized
         assert!(matches!(deserialized.user_verification, Some(UserVerificationPolicy::Required)));
         match deserialized.origin_policy {
-            Some(OriginPolicyInput::Multiple(origins)) => {
+            Some(opi) => {
+                let origins = opi.multiple.expect("Expected multiple origins to be set");
                 assert_eq!(origins.len(), 2);
                 assert_eq!(origins[0], "sub.example.com");
                 assert_eq!(origins[1], "api.example.com");
             },
-            _ => panic!("Expected Multiple variant in origin_policy"),
+            _ => panic!("Expected multiple origins in origin_policy"),
         }
 
         println!("✓ AuthenticatorOptions serialization test passed");
@@ -308,13 +319,13 @@ mod tests {
 
     #[test]
     fn test_origin_policy_enum_serialization() {
-        println!("Testing OriginPolicy enum serialization...");
+        println!("Testing OriginPolicy struct serialization...");
 
-        // Test all enum variants
+        // Test all struct shapes
         let variants = vec![
-            OriginPolicy::Single("example.com".to_string()),
-            OriginPolicy::Multiple(vec!["app.example.com".to_string(), "admin.example.com".to_string()]),
-            OriginPolicy::AllSubdomains,
+            OriginPolicy { single: Some("example.com".to_string()), all_subdomains: None, multiple: None },
+            OriginPolicy { single: None, all_subdomains: None, multiple: Some(vec!["app.example.com".to_string(), "admin.example.com".to_string()]) },
+            OriginPolicy { single: None, all_subdomains: Some(true), multiple: None },
         ];
 
         for (i, variant) in variants.iter().enumerate() {
@@ -328,7 +339,7 @@ mod tests {
             assert_eq!(json_str, json_str2, "Round-trip serialization failed for variant {}", i);
         }
 
-        println!("✓ OriginPolicy enum serialization test passed");
+        println!("✓ OriginPolicy struct serialization test passed");
     }
 
     #[test]
@@ -344,25 +355,25 @@ mod tests {
         let json_str = serde_json::to_string(&uv_preferred).unwrap();
         assert_eq!(json_str, "\"preferred\"");
 
-        // Test OriginPolicyInput lowercase serialization
-        let single = OriginPolicyInput::Single;
+        // Test OriginPolicyInput JSON serialization
+        let single = OriginPolicyInput { single: Some(true), all_subdomains: None, multiple: None };
         let json_str = serde_json::to_string(&single).unwrap();
-        assert_eq!(json_str, "\"single\"");
+        assert_eq!(json_str, "{\"single\":true}");
 
-        let multiple = OriginPolicyInput::Multiple(vec!["example.com".to_string()]);
+        let multiple = OriginPolicyInput { single: None, all_subdomains: None, multiple: Some(vec!["example.com".to_string()]) };
         let json_str = serde_json::to_string(&multiple).unwrap();
         assert_eq!(json_str, "{\"multiple\":[\"example.com\"]}");
 
-        let all_subdomains = OriginPolicyInput::AllSubdomains;
+        let all_subdomains = OriginPolicyInput { single: None, all_subdomains: Some(true), multiple: None };
         let json_str = serde_json::to_string(&all_subdomains).unwrap();
-        assert_eq!(json_str, "\"allSubdomains\"");
+        assert_eq!(json_str, "{\"allSubdomains\":true}");
 
         // Test deserialization from lowercase
         let deserialized_uv: UserVerificationPolicy = serde_json::from_str("\"required\"").unwrap();
         assert!(matches!(deserialized_uv, UserVerificationPolicy::Required));
 
-        let deserialized_single: OriginPolicyInput = serde_json::from_str("\"single\"").unwrap();
-        assert!(matches!(deserialized_single, OriginPolicyInput::Single));
+        let deserialized_single: OriginPolicyInput = serde_json::from_str("{\"single\":true}").unwrap();
+        assert_eq!(deserialized_single.single, Some(true));
 
         println!("✓ Lowercase JSON serialization test passed");
     }
