@@ -185,4 +185,34 @@ impl WebAuthnContract {
         log!("Stored authenticator for user {}", user_id);
         true
     }
+
+    /// Remove an authenticator for a given account
+    /// Only the account owner can remove their own authenticators
+    pub fn remove_authenticator(&mut self, credential_id: String) -> bool {
+        let account_id = env::predecessor_account_id();
+        log!("Attempting to remove authenticator {} for account {}", credential_id, account_id);
+
+        // Check if the account has any authenticators
+        if let Some(user_authenticators) = self.authenticators.get_mut(&account_id) {
+            if user_authenticators.contains_key(&credential_id) {
+                // Remove the authenticator from the user's map
+                user_authenticators.remove(&credential_id);
+                // Remove the credential->user mapping
+                self.credential_to_users.remove(&credential_id);
+                log!("Successfully removed authenticator {} for account {}", credential_id, account_id);
+                // If this was the last authenticator for the user, clean up the user's authenticator map
+                if user_authenticators.is_empty() {
+                    self.authenticators.remove(&account_id);
+                    log!("Removed empty authenticator map for account {}", account_id);
+                }
+                true
+            } else {
+                log!("Authenticator {} not found for account {}", credential_id, account_id);
+                false
+            }
+        } else {
+            log!("No authenticators found for account {}", account_id);
+            false
+        }
+    }
 }
