@@ -132,10 +132,9 @@ async fn test_vrf_registration_e2e_success() -> Result<(), Box<dyn std::error::E
 
         assert!(reg_info.contains_key("credential_id"), "Should have credential_id");
         assert!(reg_info.contains_key("credential_public_key"), "Should have credential_public_key");
-        assert!(reg_info.contains_key("vrf_public_key"), "Should have vrf_public_key");
 
         println!("  - Credential ID: {:?}", reg_info.get("credential_id"));
-        println!("  - VRF public key stored: {}", reg_info.get("vrf_public_key").is_some());
+        // VRF keys are stored in contract state, not returned in registration_info
     } else {
         println!("VRF Registration failed (expected with mock data)");
         println!("  - This validates the VRF verification is working");
