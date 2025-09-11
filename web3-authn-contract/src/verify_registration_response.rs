@@ -1,4 +1,4 @@
-use near_sdk::{env, log, near, serde_json, AccountId, Promise, NearToken, Gas, PublicKey};
+use near_sdk::{env, log, near, serde_json, AccountId, Promise, NearToken, Gas, PublicKey, PromiseResult};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_ENGINE;
 use base64::Engine;
 use serde_cbor::Value as CborValue;
@@ -52,6 +52,16 @@ pub struct RegistrationInfo {
     pub credential_public_key: Vec<u8>,
 }
 
+// Prepared data after synchronous VRF + WebAuthn verification, used to finalize storage
+#[near_sdk::near(serializers = [json])]
+#[derive(Debug, Clone)]
+pub struct VerifiedPreparedData {
+    pub registration_info: RegistrationInfo,
+    pub webauthn_registration: WebAuthnRegistrationCredential,
+    pub origin_policy: OriginPolicy,
+    pub webauthn_rp_id: String,
+    pub vrf_public_keys: Vec<Vec<u8>>, // [bootstrap_vrf_public_key, deterministic_vrf_public_key]
+}
 
 /////////////////////////////////////
 ///////////// Contract //////////////
@@ -85,35 +95,55 @@ impl WebAuthnContract {
     ) -> Promise {
         // Use the attached deposit as the initial balance for the new account
         let initial_balance_yoctonear = env::attached_deposit().as_yoctonear();
-        log!("Creating account and verifying registration for: {} with balance: {}",
-            new_account_id, initial_balance_yoctonear);
+        log!(
+            "Creating account and verifying registration for: {} with balance: {}",
+            new_account_id, initial_balance_yoctonear
+        );
 
-        // We need to chain promises to ensure the account is created before
-        // registering the user with Web3Authn contract.
+        // Step 1: Synchronous verification. If it fails, exit early (no account creation, no state changes)
+        let auth_opts = authenticator_options.unwrap_or(AuthenticatorOptions::default());
+        let prepared = match self.verify_vrf_webauthn_registration(
+            new_account_id.clone(),
+            vrf_data,
+            webauthn_registration,
+            auth_opts,
+            deterministic_vrf_public_key,
+        ) {
+            Some(p) => p,
+            None => {
+                log!("Verification failed; aborting without creating account");
+                return Promise::new(env::current_account_id()).function_call(
+                    "return_verification_failed".to_string(),
+                    vec![],
+                    NearToken::from_yoctonear(0),
+                    Gas::from_tgas(10),
+                );
+            }
+        };
 
-        // First promise: create the account + add key
-        let setup_promise = Promise::new(new_account_id.clone())
+        // Step 2: Create the account + fund + add user's full-access key
+        let create_account_promise = Promise::new(new_account_id.clone())
             .create_account()
             .transfer(NearToken::from_yoctonear(initial_balance_yoctonear))
             .add_full_access_key(new_public_key);
 
-        // Second promise: call the verify_and_register_user_for_account method on the current contract
-        let verification_promise = Promise::new(env::current_account_id()).function_call(
-            "verify_and_register_user_for_account".to_string(),
+        // Step 3: Finalize storage only if setup succeeded
+        let finalize_account_promise = Promise::new(env::current_account_id()).function_call(
+            "finalise_user_account".to_string(),
             serde_json::to_vec(&serde_json::json!({
                 "account_id": new_account_id,
-                "vrf_data": vrf_data,
-                "webauthn_registration": webauthn_registration,
-                "deterministic_vrf_public_key": deterministic_vrf_public_key,
-                "authenticator_options": authenticator_options.unwrap_or(AuthenticatorOptions::default()),
-                "device_number": 1, // defaults to 1 for initial registration
+                "device_number": 1u8,
+                "registration_info": prepared.registration_info,
+                "webauthn_registration": prepared.webauthn_registration,
+                "origin_policy": prepared.origin_policy,
+                "webauthn_rp_id": prepared.webauthn_rp_id,
+                "vrf_public_keys": prepared.vrf_public_keys,
             })).unwrap(),
-            NearToken::from_yoctonear(0), // No payment needed for verification
-            Gas::from_tgas(30), // 30 TGas should be sufficient (actual usage ~23.4 TGas)
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(30),
         );
 
-        // Chain them together: both must succeed for the transaction to succeed
-        setup_promise.then(verification_promise)
+        create_account_promise.then(finalize_account_promise)
     }
 
     // Must be `#[private] pub fn` to be called as a promise
@@ -127,39 +157,66 @@ impl WebAuthnContract {
         authenticator_options: AuthenticatorOptions,
         device_number: Option<u8>,
     ) -> VerifyRegistrationResponse {
+        let auth_opts = authenticator_options;
+        match self.verify_vrf_webauthn_registration(
+            account_id.clone(),
+            vrf_data,
+            webauthn_registration.clone(),
+            auth_opts,
+            deterministic_vrf_public_key,
+        ) {
+            Some(prepared) => {
+                let device_num = device_number.unwrap_or(1);
+                self.device_numbers.insert(account_id.clone(), device_num);
+                let storage_result = self.store_authenticator_and_user_for_account(
+                    account_id.clone(),
+                    device_num,
+                    prepared.registration_info,
+                    prepared.webauthn_registration,
+                    prepared.vrf_public_keys,
+                    prepared.origin_policy,
+                    prepared.webauthn_rp_id,
+                );
+                log!("VRF WebAuthn registration completed successfully for account: {}", account_id);
+                VerifyRegistrationResponse { verified: storage_result.verified, registration_info: storage_result.registration_info }
+            }
+            None => {
+                log!("VRF WebAuthn registration verification failed for account: {}", account_id);
+                VerifyRegistrationResponse { verified: false, registration_info: None }
+            }
+        }
+    }
 
+    /// Synchronous verification step used by both single-account flow and create+register flow
+    pub fn verify_vrf_webauthn_registration(
+        &self,
+        account_id: AccountId,
+        vrf_data: VRFVerificationData,
+        webauthn_registration: WebAuthnRegistrationCredential,
+        authenticator_options: AuthenticatorOptions,
+        deterministic_vrf_public_key: Vec<u8>,
+    ) -> Option<VerifiedPreparedData> {
         log!("Verifying VRF proof and WebAuthn registration for account: {}", account_id);
+
         // 1. Validate VRF and extract WebAuthn challenge (view-only)
         let vrf_challenge_b64url = match verify_vrf_and_extract_challenge(&vrf_data, &self.vrf_settings) {
             Some(challenge) => challenge,
-            None => return VerifyRegistrationResponse {
-                verified: false,
-                registration_info: None,
-            },
+            None => return None,
         };
 
         // 2. Extract RP ID from WebAuthn registration data
-        let (
-            webauthn_rp_id,
-            webauthn_origin
-        ) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
+        let (webauthn_rp_id, webauthn_origin) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
             Ok(data) => data,
             Err(e) => {
                 log!("Failed to extract RP ID from WebAuthn data: {}", e);
-                return VerifyRegistrationResponse {
-                    verified: false,
-                    registration_info: None,
-                };
+                return None;
             }
         };
 
         // Verify that the WebAuthn RP ID matches the VRF RP ID
         if webauthn_rp_id != vrf_data.rp_id {
             log!("RP ID mismatch: WebAuthn RP ID '{}' != VRF RP ID '{}'", webauthn_rp_id, vrf_data.rp_id);
-            return VerifyRegistrationResponse {
-                verified: false,
-                registration_info: None,
-            };
+            return None;
         }
 
         let user_verification = authenticator_options
@@ -174,10 +231,7 @@ impl WebAuthnContract {
             Ok(policy) => policy,
             Err(e) => {
                 log!("{}", e);
-                return VerifyRegistrationResponse {
-                    verified: false,
-                    registration_info: None,
-                };
+                return None;
             }
         };
 
@@ -190,41 +244,56 @@ impl WebAuthnContract {
             user_verification,
         );
 
-        // 3. If WebAuthn verification succeeded, store the authenticator and user data
-        if webauthn_result.verified {
-            if let Some(registration_info) = webauthn_result.registration_info {
-                // Determine device number (defaults to 1 for first device, or if passed None)
-                // Link Device via `link_device_register_user` passes the device number
-                let device_num = device_number.unwrap_or(1);
-                self.device_numbers.insert(account_id.clone(), device_num);
+        if !webauthn_result.verified { return None; }
+        let Some(registration_info) = webauthn_result.registration_info else { return None; };
 
-                // Store the authenticator and user data with dual VRF keys for the specific account
-                let storage_result = self.store_authenticator_and_user_for_account(
-                    account_id.clone(),
-                    device_num,
+        Some(VerifiedPreparedData {
+            registration_info,
+            webauthn_registration,
+            origin_policy: expected_origin_policy,
+            webauthn_rp_id,
+            vrf_public_keys: vec![vrf_data.public_key, deterministic_vrf_public_key],
+        })
+    }
+
+    /// Finalize user account: runs after account creation;
+    /// writes Web3Authn state ONLY if setup succeeded
+    #[private]
+    pub fn finalise_user_account(
+        &mut self,
+        account_id: AccountId,
+        device_number: u8,
+        registration_info: RegistrationInfo,
+        webauthn_registration: WebAuthnRegistrationCredential,
+        origin_policy: OriginPolicy,
+        webauthn_rp_id: String,
+        vrf_public_keys: Vec<Vec<u8>>,
+    ) -> VerifyRegistrationResponse {
+        // gate on the result of the previous promise (account creation)
+        match env::promise_result(0) {
+            PromiseResult::Successful(_) => {
+                self.device_numbers.insert(account_id.clone(), device_number);
+                self.store_authenticator_and_user_for_account(
+                    account_id,
+                    device_number,
                     registration_info,
                     webauthn_registration,
-                    vec![
-                        vrf_data.public_key,  // bootstrap VRF public key
-                        deterministic_vrf_public_key
-                    ],
-                    expected_origin_policy,
-                    webauthn_rp_id.clone(),
-                );
-
-                log!("VRF WebAuthn registration completed successfully for account: {}", account_id);
-                return VerifyRegistrationResponse {
-                    verified: storage_result.verified,
-                    registration_info: storage_result.registration_info,
-                };
+                    vrf_public_keys,
+                    origin_policy,
+                    webauthn_rp_id,
+                )
+            }
+            _ => {
+                log!("Account setup failed; not finalising user account state");
+                VerifyRegistrationResponse { verified: false, registration_info: None }
             }
         }
+    }
 
-        log!("VRF WebAuthn registration verification failed for account: {}", account_id);
-        VerifyRegistrationResponse {
-            verified: false,
-            registration_info: None,
-        }
+    /// Returns a failed verification response, used when we short-circuit before setup
+    #[private]
+    pub fn return_verification_failed(&mut self) -> VerifyRegistrationResponse {
+        VerifyRegistrationResponse { verified: false, registration_info: None }
     }
 
     pub fn verify_and_register_user(

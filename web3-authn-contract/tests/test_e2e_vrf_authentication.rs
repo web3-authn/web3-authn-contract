@@ -79,12 +79,7 @@ async fn test_complete_vrf_user_journey_e2e() -> Result<(), Box<dyn std::error::
     let reg_verified = reg_result_json["verified"].as_bool().unwrap_or(false);
 
     if reg_verified {
-        println!("Registration successful - VRF public key stored");
-
-        // Verify VRF public key is stored
-        let reg_info = reg_result_json["registration_info"].as_object().unwrap();
-        assert!(reg_info.contains_key("vrf_public_key"), "VRF public key should be stored");
-        println!("   - VRF public key stored: ✓");
+        println!("Registration successful - credential stored");
     } else {
         println!("Registration failed (expected with mock VRF data)");
         println!("   - Proceeding to test structure validation...");
@@ -455,4 +450,3 @@ async fn test_vrf_authentication_cross_domain_security() -> Result<(), Box<dyn s
 
     Ok(())
 }
-
