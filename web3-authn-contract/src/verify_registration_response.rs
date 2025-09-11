@@ -116,7 +116,7 @@ impl WebAuthnContract {
                     "return_verification_failed".to_string(),
                     vec![],
                     NearToken::from_yoctonear(0),
-                    Gas::from_tgas(10),
+                    Gas::from_tgas(20),
                 );
             }
         };
@@ -140,7 +140,7 @@ impl WebAuthnContract {
                 "vrf_public_keys": prepared.vrf_public_keys,
             })).unwrap(),
             NearToken::from_yoctonear(0),
-            Gas::from_tgas(30),
+            Gas::from_tgas(50),
         );
 
         create_account_promise.then(finalize_account_promise)
