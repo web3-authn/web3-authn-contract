@@ -160,6 +160,22 @@ pub fn validate_webauthn_user_flags(
     Ok(user_verified)
 }
 
+/// Check that a claimed RP ID matches an origin host (case-insensitive),
+/// either exactly or as a registrable suffix (dot-boundary).
+pub fn rp_id_matches_origin_host(claimed_rp_id: &str, origin_host: &str) -> bool {
+    let rp = claimed_rp_id.to_ascii_lowercase();
+    let host = origin_host.to_ascii_lowercase();
+    if host == rp {
+        return true;
+    }
+    if host.len() > rp.len() && host.ends_with(&rp) {
+        // Ensure dot-boundary before suffix to avoid "evil-example.com" matching "example.com"
+        let prefix = &host[..host.len() - rp.len()];
+        return prefix.ends_with('.');
+    }
+    false
+}
+
 /////////////////////////////////////
 /// TESTS
 /////////////////////////////////////
@@ -266,5 +282,25 @@ mod tests {
 
         assert!(validate_rp_id(&correct_hash, expected_rp_id, true).is_ok());
         assert!(validate_rp_id(&wrong_hash, expected_rp_id, true).is_err());
+    }
+
+    #[test]
+    fn test_rp_id_matches_origin_host() {
+        // Exact match
+        assert!(rp_id_matches_origin_host("example.com", "example.com"));
+
+        // Subdomain suffix
+        assert!(rp_id_matches_origin_host("example.com", "app.example.com"));
+        assert!(rp_id_matches_origin_host("example.com", "deep.sub.app.example.com"));
+
+        // Case-insensitive
+        assert!(rp_id_matches_origin_host("ExAmPlE.CoM", "APP.EXAMPLE.COM"));
+
+        // Not a suffix
+        assert!(!rp_id_matches_origin_host("example.com", "example.evil.com"));
+        assert!(!rp_id_matches_origin_host("ample.com", "example.com"));
+
+        // Dot-boundary enforcement
+        assert!(!rp_id_matches_origin_host("example.com", "evil-example.com"));
     }
 }

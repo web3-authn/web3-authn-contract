@@ -204,8 +204,8 @@ impl WebAuthnContract {
             None => return None,
         };
 
-        // 2. Extract RP ID from WebAuthn registration data
-        let (webauthn_rp_id, webauthn_origin) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
+        // 2. Extract origin host and origin URL from WebAuthn registration data
+        let (origin_host, webauthn_origin) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
             Ok(data) => data,
             Err(e) => {
                 log!("Failed to extract RP ID from WebAuthn data: {}", e);
@@ -213,11 +213,18 @@ impl WebAuthnContract {
             }
         };
 
-        // Verify that the WebAuthn RP ID matches the VRF RP ID
-        if webauthn_rp_id != vrf_data.rp_id {
-            log!("RP ID mismatch: WebAuthn RP ID '{}' != VRF RP ID '{}'", webauthn_rp_id, vrf_data.rp_id);
+        // 2.a Determine verified RP ID: claimed (VRF) must equal origin host or be its registrable suffix
+        let rp_matches = crate::utils::validation::rp_id_matches_origin_host(&vrf_data.rp_id, &origin_host);
+        log!(
+            "RP ID check: claimed='{}', origin_host='{}', matches={}",
+            vrf_data.rp_id, origin_host, rp_matches
+        );
+        if !rp_matches {
+            log!("RP ID mismatch: claimed vs. origin host");
             return None;
         }
+        // Persist RP ID in canonical lowercase form
+        let verified_rp_id = vrf_data.rp_id.to_ascii_lowercase();
 
         let user_verification = authenticator_options
             .user_verification
@@ -226,7 +233,7 @@ impl WebAuthnContract {
         let expected_origin_policy = match OriginPolicy::validate(
             authenticator_options.origin_policy,
             webauthn_origin,
-            webauthn_rp_id.clone(),
+            verified_rp_id.clone(),
         ) {
             Ok(policy) => policy,
             Err(e) => {
@@ -240,7 +247,7 @@ impl WebAuthnContract {
             webauthn_registration.clone(),
             &vrf_challenge_b64url,              // VRF challenge
             &expected_origin_policy,            // Origin policy
-            &webauthn_rp_id,                    // WebAuthn RP ID
+            &verified_rp_id,                    // Derived RP ID
             user_verification,
         );
 
@@ -251,7 +258,7 @@ impl WebAuthnContract {
             registration_info,
             webauthn_registration,
             origin_policy: expected_origin_policy,
-            webauthn_rp_id,
+            webauthn_rp_id: verified_rp_id,
             vrf_public_keys: vec![vrf_data.public_key, deterministic_vrf_public_key],
         })
     }
@@ -383,9 +390,9 @@ impl WebAuthnContract {
             },
         };
 
-        // 3. Extract RP ID from WebAuthn registration data
-        let (webauthn_rp_id, webauthn_origin) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
-            Ok((rp_id, origin)) => (rp_id, origin),
+        // 3. Extract origin host and origin URL from WebAuthn registration data
+        let (origin_host, webauthn_origin) = match extract_rp_id_and_origin_from_webauthn(&webauthn_registration) {
+            Ok((rp_id_host, origin)) => (rp_id_host, origin),
             Err(e) => {
                 log!("Failed to extract RP ID from WebAuthn data: {}", e);
                 return VerifyCanRegisterResponse {
@@ -395,14 +402,21 @@ impl WebAuthnContract {
             }
         };
 
-        // Verify that the WebAuthn RP ID matches the VRF RP ID
-        if webauthn_rp_id != vrf_data.rp_id {
-            log!("RP ID mismatch: WebAuthn RP ID '{}' != VRF RP ID '{}'", webauthn_rp_id, vrf_data.rp_id);
+        // 3.a Determine verified RP ID: claimed (VRF) must equal origin host or be its registrable suffix
+        let rp_matches = crate::utils::validation::rp_id_matches_origin_host(&vrf_data.rp_id, &origin_host);
+        log!(
+            "RP ID check (view): claimed='{}', origin_host='{}', matches={}",
+            vrf_data.rp_id, origin_host, rp_matches
+        );
+        if !rp_matches {
+            log!("RP ID mismatch: claimed vs. origin host");
             return VerifyCanRegisterResponse {
                 verified: false,
                 user_exists,
             };
         }
+        // Use canonical lowercase for subsequent comparisons and persistence
+        let verified_rp_id = vrf_data.rp_id.to_ascii_lowercase();
 
         let authenticator_options = authenticator_options
             .unwrap_or(AuthenticatorOptions::default());
@@ -410,7 +424,7 @@ impl WebAuthnContract {
         let expected_origin_policy = match OriginPolicy::validate(
             authenticator_options.origin_policy,
             webauthn_origin,
-            webauthn_rp_id.clone(),
+            verified_rp_id.clone(),
         ) {
             Ok(policy) => policy,
             Err(e) => {
@@ -427,7 +441,7 @@ impl WebAuthnContract {
             webauthn_registration,
             &vrf_challenge_b64url,                  // Use the VRF challenge from VRF data
             &expected_origin_policy,                // origin policy
-            &webauthn_rp_id,                        // WebAuthn RP ID
+            &verified_rp_id,                        // Derived RP ID
             UserVerificationPolicy::default(), // user verification requirement
         );
 
