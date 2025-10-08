@@ -241,6 +241,7 @@ pub enum StorageKey {
     CredentialToUsers,
     AccountDeviceCounters,
     DeviceLinkingMap,
+    AllowedOrigins,
 }
 
 /// Main contract state (V4)
@@ -269,6 +270,8 @@ pub struct WebAuthnContract {
     pub device_linking_map: LookupMap<String, (AccountId, u8)>,
     // Device counter per account: AccountId -> next device number
     pub device_numbers: LookupMap<AccountId, u8>,
+    // Contract-maintained allowlist of top-level app origins (canonical origin strings)
+    pub allowed_origins: IterableSet<String>,
 }
 
 /////////////////////////////////////
