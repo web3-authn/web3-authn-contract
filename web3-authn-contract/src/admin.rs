@@ -12,6 +12,12 @@ use crate::contract_state::{
 #[near]
 impl WebAuthnContract {
 
+    // ==============================
+    // Owner and admin assertions
+    // ==============================
+
+    // (assert_owner removed; use only_admin for admin-controlled operations)
+
     /// Checks if msg.sender (env::predecessor_account_id()) has permission to register a new user
     /// Returns true if predecessor is the user themselves, contract owner, or an admin
     /// @non-view - uses env::predecessor_account_id()
@@ -120,5 +126,213 @@ impl WebAuthnContract {
 
         log!("Ownership transferred from {} to {}", old_owner, new_owner);
         true
+    }
+
+    // ==============================
+    // Allowed origins management
+    // ==============================
+
+    /// Return the list of allowed origins (canonical strings)
+    pub fn get_allowed_origins(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.allowed_origins.iter().cloned().collect();
+        v.sort();
+        v
+    }
+
+    /// Add a single allowed origin (admin-only)
+    /// Requires exactly 1 yoctoNEAR attached deposit
+    #[payable]
+    pub fn add_allowed_origin(&mut self, origin: String) -> bool {
+        self.only_admin();
+        require!(
+            env::attached_deposit().as_yoctonear() == 1,
+            "Requires 1 yoctoNEAR attached deposit"
+        );
+
+        let normalized = match Self::normalize_origin(&origin) {
+            Ok(s) => s,
+            Err(e) => env::panic_str(&e),
+        };
+
+        // Enforce max count only if inserting a new one
+        if !self.allowed_origins.contains(&normalized) {
+            require!(
+                (self.allowed_origins.len() as usize) < Self::MAX_ALLOWED_ORIGINS_COUNT,
+                "Allowed origins limit reached"
+            );
+        }
+
+        let inserted = self.allowed_origins.insert(normalized.clone());
+        log!(
+            "{}",
+            serde_json::json!({
+                "event": "allowed_origin_added",
+                "origin": normalized
+            }).to_string()
+        );
+        inserted
+    }
+
+    /// Remove a single allowed origin (admin-only)
+    /// Requires exactly 1 yoctoNEAR attached deposit
+    #[payable]
+    pub fn remove_allowed_origin(&mut self, origin: String) -> bool {
+        self.only_admin();
+        require!(
+            env::attached_deposit().as_yoctonear() == 1,
+            "Requires 1 yoctoNEAR attached deposit"
+        );
+
+        let normalized = match Self::normalize_origin(&origin) {
+            Ok(s) => s,
+            Err(e) => env::panic_str(&e),
+        };
+
+        let removed = if self.allowed_origins.contains(&normalized) {
+            self.allowed_origins.remove(&normalized);
+            true
+        } else {
+            false
+        };
+        log!(
+            "{}",
+            serde_json::json!({
+                "event": "allowed_origin_removed",
+                "origin": normalized,
+                "existed": removed
+            }).to_string()
+        );
+        removed
+    }
+
+    /// Replace the full set of allowed origins (admin-only)
+    /// Requires exactly 1 yoctoNEAR attached deposit
+    #[payable]
+    pub fn set_allowed_origins(&mut self, origins: Vec<String>) -> bool {
+        self.only_admin();
+        require!(
+            env::attached_deposit().as_yoctonear() == 1,
+            "Requires 1 yoctoNEAR attached deposit"
+        );
+
+        let mut normalized: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for o in origins.iter() {
+            let n = match Self::normalize_origin(o) {
+                Ok(s) => s,
+                Err(e) => env::panic_str(&e),
+            };
+            require!(n.len() <= Self::MAX_ORIGIN_LENGTH, "Origin too long");
+            if normalized.len() >= Self::MAX_ALLOWED_ORIGINS_COUNT {
+                env::panic_str("Allowed origins limit reached");
+            }
+            normalized.insert(n);
+        }
+
+        // Clear existing set
+        let existing: Vec<String> = self.allowed_origins.iter().cloned().collect();
+        for o in existing.iter() {
+            self.allowed_origins.remove(o);
+        }
+
+        // Insert new set
+        for o in normalized.iter() {
+            self.allowed_origins.insert(o.clone());
+        }
+
+        log!(
+            "{}",
+            serde_json::json!({
+                "event": "allowed_origins_set",
+                "count": normalized.len()
+            }).to_string()
+        );
+        true
+    }
+
+    // ==============================
+    // Helpers: Origin normalization
+    // ==============================
+
+    const MAX_ORIGIN_LENGTH: usize = 255;
+    const MAX_ALLOWED_ORIGINS_COUNT: usize = 5000;
+
+    fn normalize_origin(input: &str) -> Result<String, String> {
+        let s = input.trim().to_lowercase();
+        if s.is_empty() {
+            return Err("Origin cannot be empty".to_string());
+        }
+        if s.len() > Self::MAX_ORIGIN_LENGTH {
+            return Err("Origin too long".to_string());
+        }
+        if s.contains(' ') {
+            return Err("Origin cannot contain spaces".to_string());
+        }
+        if s.contains('*') {
+            return Err("Wildcards are not allowed in origin".to_string());
+        }
+        if s.ends_with('/') {
+            return Err("Origin must not have a trailing slash".to_string());
+        }
+
+        let parts: Vec<&str> = s.split("://").collect();
+        if parts.len() != 2 {
+            return Err("Origin must be in the form scheme://host[:port]".to_string());
+        }
+
+        let scheme = parts[0];
+        let hostport = parts[1];
+        if hostport.is_empty() {
+            return Err("Origin host is missing".to_string());
+        }
+        if hostport.contains('/') || hostport.contains('?') || hostport.contains('#') {
+            return Err("Origin must not contain path, query, or fragment".to_string());
+        }
+
+        match scheme {
+            "https" => {}
+            "http" => {
+                // Only allow for localhost development
+                let hp = hostport;
+                let host = if let Some((h, _p)) = hp.split_once(':') { h } else { hp };
+                if host != "localhost" && host != "127.0.0.1" {
+                    return Err("http scheme only allowed for localhost".to_string());
+                }
+            }
+            _ => return Err("Only https scheme is allowed (http for localhost)".to_string()),
+        }
+
+        // Validate host and optional port
+        let (host, port_opt) = if let Some((h, p)) = hostport.split_once(':') {
+            (h, Some(p))
+        } else {
+            (hostport, None)
+        };
+
+        if host.is_empty() {
+            return Err("Origin host is empty".to_string());
+        }
+        if host.starts_with('.') || host.ends_with('.') || host.starts_with('-') || host.ends_with('-') {
+            return Err("Invalid host format".to_string());
+        }
+        if !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
+            return Err("Host contains invalid characters".to_string());
+        }
+
+        if let Some(port) = port_opt {
+            if port.is_empty() {
+                return Err("Port must not be empty".to_string());
+            }
+            if !port.chars().all(|c| c.is_ascii_digit()) {
+                return Err("Port must be numeric".to_string());
+            }
+            // Basic range check
+            if let Ok(pn) = port.parse::<u32>() {
+                if pn == 0 || pn > 65535 {
+                    return Err("Port out of range".to_string());
+                }
+            }
+        }
+
+        Ok(format!("{}://{}", scheme, hostport))
     }
 }

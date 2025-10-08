@@ -53,6 +53,7 @@ impl WebAuthnContract {
             credential_to_users: LookupMap::new(StorageKey::CredentialToUsers),
             device_numbers: LookupMap::new(StorageKey::AccountDeviceCounters),
             device_linking_map: LookupMap::new(StorageKey::DeviceLinkingMap),
+            allowed_origins: IterableSet::new(StorageKey::AllowedOrigins),
         };
         // Add contract deployer as an admin
         contract.admins.insert(owner);
