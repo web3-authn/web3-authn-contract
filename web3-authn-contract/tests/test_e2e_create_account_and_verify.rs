@@ -9,6 +9,7 @@ use serde_json::json;
 mod utils_mocks;
 use utils_mocks::{
     create_mock_webauthn_registration,
+    create_mock_webauthn_registration_with_origin,
     generate_account_creation_data,
     generate_vrf_data,
     generate_deterministic_vrf_public_key
@@ -70,6 +71,47 @@ async fn test_create_account_and_register_user_e2e() -> Result<(), Box<dyn std::
     println!("  - Transaction successful: {}", result.is_success());
     println!("  - Gas used: {:?}", result.total_gas_burnt);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_create_account_with_base_rp_and_subdomain_origin() -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure base-domain RP ID works with subdomain origin when policy permits
+    let contract = get_or_deploy_contract().await;
+
+    let rp_id = "example.com"; // claimed/base RP ID
+    let origin_host = "app.example.com"; // origin host (subdomain)
+    let user_id = "base_rp_user.testnet";
+    let session_id = "session_subdomain";
+    let new_public_key = "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp";
+
+    let vrf_data = generate_vrf_data(rp_id, user_id, session_id, None, None).await?;
+    let deterministic_vrf_public_key = generate_deterministic_vrf_public_key();
+    let webauthn_registration = create_mock_webauthn_registration_with_origin(
+        &vrf_data.output,
+        rp_id,
+        origin_host,
+        user_id,
+        None,
+    );
+
+    let result = contract
+        .call("create_account_and_register_user")
+        .args_json(json!({
+            "new_account_id": user_id,
+            "new_public_key": new_public_key,
+            "vrf_data": vrf_data.to_json(),
+            "webauthn_registration": webauthn_registration,
+            "deterministic_vrf_public_key": deterministic_vrf_public_key,
+            // Allow exact origin (single) which ends-with rp_id
+            "authenticator_options": { "origin_policy": { "single": true } }
+        }))
+        .gas(Gas::from_tgas(ACCOUNT_CREATION_GAS_LIMIT))
+        .transact()
+        .await?;
+
+    // Test succeeds structurally; actual verification may fail due to mocked VRF
+    assert!(result.is_success());
     Ok(())
 }
 

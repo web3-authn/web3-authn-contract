@@ -206,6 +206,82 @@ pub fn create_mock_webauthn_registration(
     })
 }
 
+/// Create mock WebAuthn registration where the rp_id used for hash
+/// can differ from the origin host (e.g., base-domain RP ID with subdomain origin)
+pub fn create_mock_webauthn_registration_with_origin(
+    vrf_output: &[u8],
+    rp_id_for_hash: &str,
+    origin_host: &str,
+    account_id: &str,
+    challenge: Option<&[u8]>
+) -> serde_json::Value {
+    let webauthn_challenge = challenge.unwrap_or(&vrf_output[0..32]);
+    let challenge_b64 = BASE64_URL_ENGINE.encode(webauthn_challenge);
+
+    let origin = format!("https://{}", origin_host);
+    let client_data = format!(
+        r#"{{"type":"webauthn.create","challenge":"{}","origin":"{}","rpId":"{}","crossOrigin":false}}"#,
+        challenge_b64, origin, rp_id_for_hash
+    );
+    let client_data_b64 = BASE64_URL_ENGINE.encode(client_data.as_bytes());
+
+    // Create attestation with RP ID hash of rp_id_for_hash
+    let mut attestation_map = BTreeMap::new();
+    attestation_map.insert(
+        serde_cbor::Value::Text("fmt".to_string()),
+        serde_cbor::Value::Text("none".to_string()),
+    );
+
+    let mut auth_data = Vec::new();
+    let rp_id_hash = sha2::Sha256::digest(rp_id_for_hash.as_bytes());
+    auth_data.extend_from_slice(&rp_id_hash);
+    auth_data.push(0x45); // UP + UV + AT
+    auth_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+
+    // AAGUID (16 bytes)
+    auth_data.extend_from_slice(&[0x00u8; 16]);
+
+    // Credential ID
+    let cred_id = format!("cred_{}", account_id);
+    auth_data.extend_from_slice(&(cred_id.len() as u16).to_be_bytes());
+    auth_data.extend_from_slice(cred_id.as_bytes());
+
+    // COSE Ed25519
+    let mock_ed25519_pubkey = [0x42u8; 32];
+    let mut cose_map = BTreeMap::new();
+    cose_map.insert(serde_cbor::Value::Integer(1), serde_cbor::Value::Integer(1));
+    cose_map.insert(serde_cbor::Value::Integer(3), serde_cbor::Value::Integer(-8));
+    cose_map.insert(serde_cbor::Value::Integer(-1), serde_cbor::Value::Integer(6));
+    cose_map.insert(serde_cbor::Value::Integer(-2), serde_cbor::Value::Bytes(mock_ed25519_pubkey.to_vec()));
+    let cose_key = serde_cbor::to_vec(&serde_cbor::Value::Map(cose_map)).unwrap();
+    auth_data.extend_from_slice(&cose_key);
+
+    attestation_map.insert(
+        serde_cbor::Value::Text("authData".to_string()),
+        serde_cbor::Value::Bytes(auth_data),
+    );
+    attestation_map.insert(
+        serde_cbor::Value::Text("attStmt".to_string()),
+        serde_cbor::Value::Map(BTreeMap::new()),
+    );
+
+    let attestation_object_bytes = serde_cbor::to_vec(&serde_cbor::Value::Map(attestation_map)).unwrap();
+    let attestation_object_b64 = BASE64_URL_ENGINE.encode(&attestation_object_bytes);
+
+    json!({
+        "id": cred_id,
+        "rawId": BASE64_URL_ENGINE.encode(cred_id.as_bytes()),
+        "response": {
+            "clientDataJSON": client_data_b64,
+            "attestationObject": attestation_object_b64,
+            "transports": ["internal"]
+        },
+        "authenticatorAttachment": "platform",
+        "type": "public-key",
+        "clientExtensionResults": null
+    })
+}
+
 /// Create mock WebAuthn authentication response using VRF challenge
 pub fn create_mock_webauthn_authentication(vrf_output: &[u8], rp_id: &str) -> serde_json::Value {
     // Use first 32 bytes of VRF output as WebAuthn challenge
