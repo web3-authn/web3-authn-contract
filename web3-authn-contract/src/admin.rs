@@ -158,13 +158,7 @@ impl WebAuthnContract {
         }
 
         let inserted = self.allowed_origins.insert(normalized.clone());
-        log!(
-            "{}",
-            serde_json::json!({
-                "event": "allowed_origin_added",
-                "origin": normalized
-            }).to_string()
-        );
+        log!("added origin: {}", normalized);
         inserted
     }
 
@@ -184,14 +178,7 @@ impl WebAuthnContract {
         } else {
             false
         };
-        log!(
-            "{}",
-            serde_json::json!({
-                "event": "allowed_origin_removed",
-                "origin": normalized,
-                "existed": removed
-            }).to_string()
-        );
+        log!("removed origin: {}", normalized);
         removed
     }
 
@@ -224,13 +211,7 @@ impl WebAuthnContract {
             self.allowed_origins.insert(o.clone());
         }
 
-        log!(
-            "{}",
-            serde_json::json!({
-                "event": "allowed_origins_set",
-                "count": normalized.len()
-            }).to_string()
-        );
+        log!("Set {} origins", normalized.len());
         true
     }
 
