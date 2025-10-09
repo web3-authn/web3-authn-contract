@@ -4,7 +4,7 @@ use near_sdk::{env, log};
 // WEBAUTHN COMMON VALIDATION FUNCTIONS (REFACTORED FROM AUTH/REGISTRATION)
 // ============================================================================
 
-use crate::utils::parsers::{decode_client_data_json, parse_authenticator_data, ClientDataJSON};
+use crate::utils::parsers::{decode_client_data_json, parse_authenticator_data, ClientDataJSON, extract_rp_id_from_origin};
 use crate::contract_state::{OriginPolicy, UserVerificationPolicy};
 
 /// Validate client data JSON and challenge for WebAuthn operations
@@ -47,13 +47,12 @@ pub fn validate_origin_policy(
     } else if let Some(allowed_origins) = &origin_policy.multiple {
         allowed_origins.iter().any(|allowed_origin| client_origin == allowed_origin)
     } else if origin_policy.all_subdomains.unwrap_or(false) {
-        if !client_origin.contains(expected_rp_id) {
-            return Err(format!(
-                "Credential origin '{}' does not match RP ID '{}'",
-                client_origin, expected_rp_id
-            ));
-        }
-        client_origin.ends_with(&expected_rp_id)
+        // For subdomain policy, compare against the origin host (without port)
+        let origin_host = match extract_rp_id_from_origin(client_origin) {
+            Ok(h) => h,
+            Err(e) => return Err(format!("Invalid origin '{}': {}", client_origin, e)),
+        };
+        rp_id_matches_origin_host(expected_rp_id, &origin_host)
     } else {
         false
     };
@@ -70,9 +69,10 @@ pub fn validate_origin_policy(
                 client_origin, allowed_origins
             ));
         } else if origin_policy.all_subdomains.unwrap_or(false) {
+            let origin_host = extract_rp_id_from_origin(client_origin).unwrap_or_else(|_| "".to_string());
             return Err(format!(
-                "Origin '{}' not allowed by subdomain policy. Expected RP ID: {}",
-                client_origin, expected_rp_id
+                "Origin host '{}' not allowed by subdomain policy. Expected RP ID: {}",
+                origin_host, expected_rp_id
             ));
         } else {
             return Err("Origin policy is not configured".to_string());
