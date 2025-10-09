@@ -48,6 +48,7 @@ vrf-contract-verifier = { version = "0.8", features = ["near"], default-features
 near-sdk = { workspace = true }
 near-workspaces = { workspace = true }
 tokio = { workspace = true }
+near-crypto = "0.21"
 
 bincode = "1.3.3"
 bs58 = "0.5"
@@ -59,4 +60,3 @@ sha2 = "0.10"
 # VRF generation for testing, uses getrandom lib for browser WASM compatibility
 # (this library is not included in contract binary,
 vrf-wasm = { version = "0.8", features = ["browser"] }
-

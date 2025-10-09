@@ -20,9 +20,10 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
     let sandbox = near_workspaces::sandbox().await?;
 
     // Get the account that will be calling the contract (the test account)
-    let test_account = contract.as_account();
-    let account_id = test_account.id().clone();
-    println!("Test account ID: {}", account_id);
+    // Create a real user account we control in the sandbox
+    let user = sandbox.dev_create_account().await?;
+    let new_account_id = user.id().as_str().to_string();
+    println!("User account ID: {}", new_account_id);
 
     // Get current block height for VRF data
     let current_block = sandbox.view_block().await?;
@@ -32,7 +33,7 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
     // Check initial device counter (should be 0)
     let device_counter_initial = contract.view("get_device_counter")
         .args_json(serde_json::json!({
-            "account_id": account_id.clone(),
+            "account_id": new_account_id.clone(),
         }))
         .await?;
     let device_counter_initial_value: u32 = device_counter_initial.json()?;
@@ -41,20 +42,19 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
 
     // Call link_device_register_user with mock data
     // This should increment the device counter even though VRF verification will fail
-    let (rp_id, user_id, session_id, block_height, new_public_key) = generate_account_creation_data();
-        let vrf_data = generate_vrf_data(&rp_id, &user_id, &session_id, Some(current_block_height), None).await?;
+    let (rp_id, user_id, session_id, _block_height, _new_public_key) = generate_account_creation_data();
+    let vrf_data = generate_vrf_data(&rp_id, &user_id, &session_id, Some(current_block_height), None).await?;
     let webauthn_registration = create_mock_webauthn_registration(&vrf_data.output, &rp_id, &user_id, None);
     let deterministic_vrf_public_key = generate_deterministic_vrf_public_key();
 
-    println!("Calling create_account_and_register_user...");
-    let result = contract
-        .call("create_account_and_register_user")
+    println!("Calling verify_and_register_user as {} for device 1...", new_account_id);
+    let result = user
+        .call(contract.id(), "verify_and_register_user")
         .args_json(serde_json::json!({
-            "new_account_id": account_id.clone(),
-            "new_public_key": new_public_key,
             "vrf_data": vrf_data.to_json(),
             "webauthn_registration": webauthn_registration,
-            "deterministic_vrf_public_key": deterministic_vrf_public_key
+            "deterministic_vrf_public_key": deterministic_vrf_public_key,
+            "authenticator_options": { "origin_policy": { "single": true } }
         }))
         .gas(near_sdk::Gas::from_tgas(200))
         .transact()
@@ -65,7 +65,7 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
     // Check that the device counter was incremented to 1
     let device_counter_after = contract.view("get_device_counter")
         .args_json(serde_json::json!({
-            "account_id": account_id.clone(),
+            "account_id": new_account_id.clone(),
         }))
         .await?;
     let device_counter_after_value: u32 = device_counter_after.json()?;
@@ -74,18 +74,20 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
     // The device counter should be incremented to 1, even though VRF verification failed
     assert_eq!(device_counter_after_value, 1, "Device counter should be incremented to 1 after create_account_and_register_user call");
 
-    // Call link_device_register_user again to test second increment
+    // Prepare and perform a second registration as the same user to increment to 2
     let vrf_data_2 = generate_vrf_data(&rp_id, &user_id, &session_id, Some(current_block_height), None).await?;
     let webauthn_registration_2 = create_mock_webauthn_registration(&vrf_data_2.output, &rp_id, &user_id, None);
     let deterministic_vrf_public_key_2 = vec![1u8; 32];
 
-    println!("Calling link_device_register_user for device 2...");
-    let result_2 = contract
-        .call("link_device_register_user")
+    // Call link_device_register_user as the user (predecessor == user)
+    println!("Calling link_device_register_user for device 2 as {}...", new_account_id);
+    let result_2 = user
+        .call(contract.id(), "link_device_register_user")
         .args_json(serde_json::json!({
             "vrf_data": vrf_data_2.to_json(),
             "webauthn_registration": webauthn_registration_2,
-            "deterministic_vrf_public_key": deterministic_vrf_public_key_2
+            "deterministic_vrf_public_key": deterministic_vrf_public_key_2,
+            "authenticator_options": { "origin_policy": { "single": true } }
         }))
         .gas(near_sdk::Gas::from_tgas(200))
         .transact()
@@ -93,18 +95,16 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
 
     println!("Second link_device_register_user result: {:?}", result_2);
 
-    // Check that the device counter was incremented to 2
+    // Check that the device counter was incremented to 2 for the new account
     let device_counter_final = contract.view("get_device_counter")
         .args_json(serde_json::json!({
-            "account_id": account_id.clone(),
+            "account_id": new_account_id.clone(),
         }))
         .await?;
     let device_counter_final_value: u32 = device_counter_final.json()?;
     println!("Final device counter: {}", device_counter_final_value);
-
-    // The device counter should be incremented to 2
     assert_eq!(device_counter_final_value, 2, "Device counter should be incremented to 2 after second link_device_register_user call");
 
-    println!("✓ Test passed: Device counter is correctly incremented by link_device_register_user");
+    println!("✓ Test passed: Device counter correctly incremented to 2 for {}", new_account_id);
     Ok(())
 }
