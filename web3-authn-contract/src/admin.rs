@@ -140,14 +140,9 @@ impl WebAuthnContract {
     }
 
     /// Add a single allowed origin (admin-only)
-    /// Requires exactly 1 yoctoNEAR attached deposit
     #[payable]
     pub fn add_allowed_origin(&mut self, origin: String) -> bool {
         self.only_admin();
-        require!(
-            env::attached_deposit().as_yoctonear() == 1,
-            "Requires 1 yoctoNEAR attached deposit"
-        );
 
         let normalized = match Self::normalize_origin(&origin) {
             Ok(s) => s,
@@ -174,14 +169,9 @@ impl WebAuthnContract {
     }
 
     /// Remove a single allowed origin (admin-only)
-    /// Requires exactly 1 yoctoNEAR attached deposit
     #[payable]
     pub fn remove_allowed_origin(&mut self, origin: String) -> bool {
         self.only_admin();
-        require!(
-            env::attached_deposit().as_yoctonear() == 1,
-            "Requires 1 yoctoNEAR attached deposit"
-        );
 
         let normalized = match Self::normalize_origin(&origin) {
             Ok(s) => s,
@@ -206,14 +196,9 @@ impl WebAuthnContract {
     }
 
     /// Replace the full set of allowed origins (admin-only)
-    /// Requires exactly 1 yoctoNEAR attached deposit
     #[payable]
     pub fn set_allowed_origins(&mut self, origins: Vec<String>) -> bool {
         self.only_admin();
-        require!(
-            env::attached_deposit().as_yoctonear() == 1,
-            "Requires 1 yoctoNEAR attached deposit"
-        );
 
         let mut normalized: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for o in origins.iter() {
