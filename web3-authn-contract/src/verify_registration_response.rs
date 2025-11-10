@@ -166,11 +166,11 @@ impl WebAuthnContract {
             deterministic_vrf_public_key,
         ) {
             Some(prepared) => {
-                let device_num = device_number.unwrap_or(1);
-                self.device_numbers.insert(account_id.clone(), device_num);
+                let device_number = device_number.unwrap_or(1);
+                self.device_numbers.insert(account_id.clone(), device_number);
                 let storage_result = self.store_authenticator_and_user_for_account(
                     account_id.clone(),
-                    device_num,
+                    device_number,
                     prepared.registration_info,
                     prepared.webauthn_registration,
                     prepared.vrf_public_keys,
@@ -197,6 +197,16 @@ impl WebAuthnContract {
         deterministic_vrf_public_key: Vec<u8>,
     ) -> Option<VerifiedPreparedData> {
         log!("Verifying VRF proof and WebAuthn registration for account: {}", account_id);
+
+        // Ensure the target account matches the VRF-bound user_id to prevent relayer tampering
+        if account_id.as_str() != vrf_data.user_id {
+            log!(
+                "Account mismatch: account_id='{}' does not equal vrf_data.user_id='{}'",
+                account_id,
+                vrf_data.user_id
+            );
+            return None;
+        }
 
         // 1. Validate VRF and extract WebAuthn challenge (view-only)
         let vrf_challenge_b64url = match verify_vrf_and_extract_challenge(&vrf_data, &self.vrf_settings) {
