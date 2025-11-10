@@ -8,7 +8,7 @@ use utils_mocks::{
 };
 
 mod utils_contracts;
-use utils_contracts::get_or_deploy_contract;
+use utils_contracts::{get_or_deploy_contract, get_shared_worker};
 
 
 #[tokio::test]
@@ -16,17 +16,17 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
     // Deploy contract using near_workspaces
     let contract = get_or_deploy_contract().await;
 
-    // Get the sandbox for fast_forward and block operations
-    let sandbox = near_workspaces::sandbox().await?;
+    // Use the same worker as the deployed contract to avoid cross-sandbox issues
+    let worker = get_shared_worker().await;
 
     // Get the account that will be calling the contract (the test account)
     // Create a real user account we control in the sandbox
-    let user = sandbox.dev_create_account().await?;
+    let user = worker.dev_create_account().await?;
     let new_account_id = user.id().as_str().to_string();
     println!("User account ID: {}", new_account_id);
 
     // Get current block height for VRF data
-    let current_block = sandbox.view_block().await?;
+    let current_block = worker.view_block().await?;
     let current_block_height = current_block.height();
     println!("Current block height: {}", current_block_height);
 
