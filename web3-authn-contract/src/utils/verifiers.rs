@@ -1,5 +1,7 @@
 use near_sdk::log;
 use serde_cbor::Value as CborValue;
+use serde_cbor::de::Deserializer;
+use near_sdk::serde::de;
 use ed25519_dalek::Signature as Ed25519Signature;
 use x509_parser::prelude::*;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -118,7 +120,9 @@ pub(crate) fn verify_p256_signature_from_cose(
     cose_public_key: &[u8],
 ) -> Result<bool, String> {
     // Parse COSE public key to get P-256 coordinates
-    let cose_key: CborValue = serde_cbor::from_slice(cose_public_key)
+    // Parse only the first CBOR value to tolerate trailing extension data
+    let mut deserializer = Deserializer::from_slice(cose_public_key);
+    let cose_key: CborValue = de::Deserialize::deserialize(&mut deserializer)
         .map_err(|_| "Failed to parse COSE public key")?;
 
     let (x_bytes, y_bytes) = extract_p256_coordinates_from_cose(&cose_key)?;
@@ -232,7 +236,9 @@ pub(crate) fn verify_u2f_signature(
             }
         } else {
             // Self-attestation - use credential public key
-            let parsed_cose_key: CborValue = serde_cbor::from_slice(credential_public_key)
+            // Parse only the first CBOR value to tolerate trailing extension data
+            let mut deserializer = Deserializer::from_slice(credential_public_key);
+            let parsed_cose_key: CborValue = de::Deserialize::deserialize(&mut deserializer)
                 .map_err(|_| "Failed to parse COSE public key")?;
 
             log!("U2F self-attestation - using credential public key");
@@ -273,7 +279,10 @@ pub(crate) fn verify_authentication_signature(
     log!("Starting authentication signature verification");
 
     // Parse COSE public key to determine the algorithm and extract parameters
-    let cose_key: CborValue = serde_cbor::from_slice(credential_public_key)
+    // Parse only the first CBOR value to tolerate trailing extension data such as
+    // credProtect / hmac-secret for some authenticators (e.g. YubiKeys)
+    let mut deserializer = Deserializer::from_slice(credential_public_key);
+    let cose_key: CborValue = de::Deserialize::deserialize(&mut deserializer)
         .map_err(|_| "Failed to parse COSE public key")?;
 
     if let CborValue::Map(key_map) = &cose_key {
@@ -570,6 +579,79 @@ mod tests {
             }
             Err(e) => {
                 panic!("Should not fail with valid signature data: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_verify_authentication_signature_with_standard_cose_key() {
+        // Use the same keypair and signed data as in _create_test_signature_data
+        let (cose_public_key, auth_data, signature_bytes) = _create_test_signature_data();
+
+        // Reconstruct signed data: authData || clientDataHash (all zeros in helper)
+        let client_data_hash = [0u8; 32];
+        let mut signed_data = auth_data.clone();
+        signed_data.extend_from_slice(&client_data_hash);
+
+        let result = verify_authentication_signature(
+            &signature_bytes,
+            &signed_data,
+            &cose_public_key,
+        );
+
+        match result {
+            Ok(verified) => {
+                assert!(verified, "Standard COSE key should verify successfully");
+            }
+            Err(e) => {
+                panic!("Standard COSE key parsing/signature verification failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_verify_authentication_signature_with_yubikey_cose_and_extensions() {
+        // Start from a valid P-256 COSE key and signature
+        let (cose_public_key, auth_data, signature_bytes) = _create_test_signature_data();
+
+        // Append CBOR-encoded extensions as emitted by some YubiKeys:
+        // { "credProtect": 3, "hmac-secret": true }
+        let yubikey_extensions: [u8; 27] = [
+            0xa2, // map(2)
+            0x6b, // text(11)
+            0x63, 0x72, 0x65, 0x64, 0x50, 0x72, 0x6f, 0x74, 0x65, 0x63, 0x74, // "credProtect"
+            0x03, // value: 3
+            0x6b, // text(11)
+            0x68, 0x6d, 0x61, 0x63, 0x2d, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74, // "hmac-secret"
+            0xf5, // true
+        ];
+
+        let mut yubikey_cose = cose_public_key.clone();
+        yubikey_cose.extend_from_slice(&yubikey_extensions);
+
+        // Reconstruct signed data: authData || clientDataHash (all zeros in helper)
+        let client_data_hash = [0u8; 32];
+        let mut signed_data = auth_data.clone();
+        signed_data.extend_from_slice(&client_data_hash);
+
+        let result = verify_authentication_signature(
+            &signature_bytes,
+            &signed_data,
+            &yubikey_cose,
+        );
+
+        match result {
+            Ok(verified) => {
+                assert!(
+                    verified,
+                    "YubiKey-style COSE key with trailing extensions should still verify"
+                );
+            }
+            Err(e) => {
+                panic!(
+                    "YubiKey-style COSE key with trailing extensions failed to parse/verify: {}",
+                    e
+                );
             }
         }
     }

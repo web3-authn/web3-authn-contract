@@ -1,4 +1,6 @@
 use serde_cbor::Value as CborValue;
+use serde_cbor::de::Deserializer;
+use near_sdk::serde::de;
 use p256::ecdsa::VerifyingKey;
 use p256::PublicKey as P256PublicKey;
 
@@ -52,7 +54,9 @@ pub fn create_p256_public_key(x_bytes: &[u8], y_bytes: &[u8]) -> Result<Verifyin
 // Helper function to extract uncompressed P-256 public key from COSE format
 pub fn get_uncompressed_p256_pubkey(cose_public_key_bytes: &[u8]) -> Result<Vec<u8>, String> {
 
-    let cose_public_key: CborValue = serde_cbor::from_slice(cose_public_key_bytes)
+    // Parse only the first CBOR value to tolerate trailing extension data
+    let mut deserializer = Deserializer::from_slice(cose_public_key_bytes);
+    let cose_public_key: CborValue = de::Deserialize::deserialize(&mut deserializer)
         .map_err(|_| "Failed to parse COSE public key")?;
 
     let (
