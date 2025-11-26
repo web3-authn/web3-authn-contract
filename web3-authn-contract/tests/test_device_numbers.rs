@@ -40,11 +40,12 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
     println!("Initial device counter: {}", device_counter_initial_value);
     assert_eq!(device_counter_initial_value, 0, "Initial device counter should be 0");
 
-    // Call link_device_register_user with mock data
-    // This should increment the device counter even though VRF verification will fail
-    let (rp_id, user_id, session_id, _block_height, _new_public_key) = generate_account_creation_data();
-    let vrf_data = generate_vrf_data(&rp_id, &user_id, &session_id, Some(current_block_height), None).await?;
-    let webauthn_registration = create_mock_webauthn_registration(&vrf_data.output, &rp_id, &user_id, None);
+    // Call verify_and_register_user with mock data
+    // VRF user_id must match the on-chain account_id for verification to succeed
+    let (rp_id, _gen_user_id, session_id, _block_height, _new_public_key) = generate_account_creation_data();
+    let vrf_user_id = new_account_id.clone();
+    let vrf_data = generate_vrf_data(&rp_id, &vrf_user_id, &session_id, Some(current_block_height), None).await?;
+    let webauthn_registration = create_mock_webauthn_registration(&vrf_data.output, &rp_id, &vrf_user_id, None);
     let deterministic_vrf_public_key = generate_deterministic_vrf_public_key();
 
     println!("Calling verify_and_register_user as {} for device 1...", new_account_id);
@@ -71,12 +72,12 @@ async fn test_device_counter_incremented_by_link_device_register_user() -> Resul
     let device_counter_after_value: u32 = device_counter_after.json()?;
     println!("Device counter after create_account_and_register_user: {}", device_counter_after_value);
 
-    // The device counter should be incremented to 1, even though VRF verification failed
-    assert_eq!(device_counter_after_value, 1, "Device counter should be incremented to 1 after create_account_and_register_user call");
+    // The device counter should be incremented to 1 after successful registration
+    assert_eq!(device_counter_after_value, 1, "Device counter should be incremented to 1 after verify_and_register_user call");
 
     // Prepare and perform a second registration as the same user to increment to 2
-    let vrf_data_2 = generate_vrf_data(&rp_id, &user_id, &session_id, Some(current_block_height), None).await?;
-    let webauthn_registration_2 = create_mock_webauthn_registration(&vrf_data_2.output, &rp_id, &user_id, None);
+    let vrf_data_2 = generate_vrf_data(&rp_id, &vrf_user_id, &session_id, Some(current_block_height), None).await?;
+    let webauthn_registration_2 = create_mock_webauthn_registration(&vrf_data_2.output, &rp_id, &vrf_user_id, None);
     let deterministic_vrf_public_key_2 = vec![1u8; 32];
 
     // Call link_device_register_user as the user (predecessor == user)

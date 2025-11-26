@@ -949,6 +949,56 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_vrf_webauthn_registration_requires_matching_account_and_user_id() {
+        // Setup test environment
+        let context = get_context_with_seed(7);
+        testing_env!(context.build());
+        let contract = crate::WebAuthnContract::init();
+
+        // Target account on-chain
+        let account_id: AccountId = "alice.testnet".parse().unwrap();
+
+        // VRF data is bound to a different user_id
+        let vrf_data = VRFVerificationData {
+            vrf_input_data: Vec::new(),
+            vrf_output: Vec::new(),
+            vrf_proof: Vec::new(),
+            public_key: Vec::new(),
+            user_id: "bob.testnet".to_string(), // mismatch
+            rp_id: "example.com".to_string(),
+            block_height: 0,
+            block_hash: Vec::new(),
+        };
+
+        // Minimal WebAuthn registration payload (won't be reached because of early mismatch check)
+        let dummy_registration = WebAuthnRegistrationCredential {
+            id: "test_credential_id".to_string(),
+            raw_id: "test_credential_id".to_string(),
+            response: AuthenticatorAttestationResponse {
+                client_data_json: "".to_string(),
+                attestation_object: "".to_string(),
+                transports: None,
+            },
+            authenticator_attachment: None,
+            type_: "public-key".to_string(),
+            client_extension_results: None,
+        };
+
+        let result = contract.verify_vrf_webauthn_registration(
+            account_id,
+            vrf_data,
+            dummy_registration,
+            AuthenticatorOptions::default(),
+            Vec::new(),
+        );
+
+        assert!(
+            result.is_none(),
+            "verify_vrf_webauthn_registration must fail when account_id and vrf_data.user_id differ"
+        );
+    }
+
+    #[test]
     fn test_create_account_and_register_user() {
         let context = get_context_with_seed(42);
         testing_env!(context.build());
