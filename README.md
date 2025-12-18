@@ -68,7 +68,7 @@ For production upgrades:
 ./upgrade.sh
 ```
 
-Note: contract upgrades must ensure storage layout hasn't changed from previous deployments. If the storage layout has changed, you must delete and re-create the contract, or write a migration function.
+Note: contract upgrades must ensure storage layout hasn't changed from previous deployments. If the storage layout has changed, you must run an on-chain migration (e.g. `migrate()`) or delete and re-create the contract.
 
 ## How it Works
 
@@ -272,5 +272,4 @@ sequenceDiagram
     Contract->>Contract: 13. Verify WebAuthn authentication ✓
     Contract->>Client: 14. Authentication complete ✓
 ```
-
 

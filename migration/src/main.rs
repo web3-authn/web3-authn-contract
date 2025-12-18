@@ -4,9 +4,8 @@ use tracing::info;
 
 mod near_client;
 mod migration_manager;
-mod v5_to_v6;
 
-use migration_manager::{MigrationManager, MigrationConfig};
+use migration_manager::MigrationManager;
 
 
 #[derive(Parser)]
@@ -18,22 +17,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create backup of contract state
-    Backup {
-        /// Output file for backup
-        #[arg(long, default_value = "backup.json")]
-        output: String,
-    },
+    /// Print `get_contract_state`
+    ContractState,
 
-    /// Migrate contract data from backup
-    Migrate {
-        /// Backup file to migrate from
-        #[arg(long)]
-        backup_file: String,
-
-        /// Batch size for migration
-        #[arg(long, default_value = "3")]
-        batch_size: u32,
+    /// Call on-chain `migrate()` (v4 -> v5)
+    MigrateV4ToV5 {
+        /// Gas to attach (in Tgas)
+        #[arg(long, default_value = "300")]
+        gas_tgas: u64,
     },
 }
 
@@ -44,22 +35,17 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    let manager = MigrationManager::new().await?;
+
     match cli.command {
-        Commands::Backup { output } => {
-            let config = MigrationConfig::new(output.clone());
-            let manager = MigrationManager::new(config).await?;
-            manager.backup_exported_migration_data().await?;
+        Commands::ContractState => {
+            let state = manager.get_contract_state().await?;
+            println!("{}", serde_json::to_string_pretty(&state)?);
         }
 
-        Commands::Migrate { backup_file, batch_size } => {
-            let mut config = MigrationConfig::new(backup_file.clone());
-            config.batch_size = batch_size;
-
-            let manager = MigrationManager::new(config).await?;
-            let results = manager.migrate_authenticator_batch_from_file(backup_file).await?;
-
-            let total_migrated = results.iter().map(|r| r.migrated_count).sum::<u32>();
-            info!("Migration completed successfully! Total migrated: {}", total_migrated);
+        Commands::MigrateV4ToV5 { gas_tgas } => {
+            manager.migrate_v4_to_v5(gas_tgas).await?;
+            info!("Migration completed successfully");
         }
     }
 

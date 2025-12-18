@@ -122,6 +122,7 @@ impl WebAuthnContract {
         };
 
         // Step 2: Create the account + fund + add user's full-access key
+        let near_public_key = new_public_key.clone();
         let create_account_promise = Promise::new(new_account_id.clone())
             .create_account()
             .transfer(NearToken::from_yoctonear(initial_balance_yoctonear))
@@ -138,6 +139,7 @@ impl WebAuthnContract {
                 "origin_policy": prepared.origin_policy,
                 "webauthn_rp_id": prepared.webauthn_rp_id,
                 "vrf_public_keys": prepared.vrf_public_keys,
+                "near_public_key": near_public_key,
             })).unwrap(),
             NearToken::from_yoctonear(0),
             Gas::from_tgas(50),
@@ -168,6 +170,7 @@ impl WebAuthnContract {
             Some(prepared) => {
                 let device_number = device_number.unwrap_or(1);
                 self.device_numbers.insert(account_id.clone(), device_number);
+                let near_public_key = Some(env::signer_account_pk());
                 let storage_result = self.store_authenticator_and_user_for_account(
                     account_id.clone(),
                     device_number,
@@ -176,6 +179,7 @@ impl WebAuthnContract {
                     prepared.vrf_public_keys,
                     prepared.origin_policy,
                     prepared.webauthn_rp_id,
+                    near_public_key,
                 );
                 log!("VRF WebAuthn registration completed successfully for account: {}", account_id);
                 VerifyRegistrationResponse { verified: storage_result.verified, registration_info: storage_result.registration_info }
@@ -285,6 +289,7 @@ impl WebAuthnContract {
         origin_policy: OriginPolicy,
         webauthn_rp_id: String,
         vrf_public_keys: Vec<Vec<u8>>,
+        near_public_key: PublicKey,
     ) -> VerifyRegistrationResponse {
         // gate on the result of the previous promise (account creation)
         match env::promise_result(0) {
@@ -298,6 +303,7 @@ impl WebAuthnContract {
                     vrf_public_keys,
                     origin_policy,
                     webauthn_rp_id,
+                    Some(near_public_key),
                 )
             }
             _ => {

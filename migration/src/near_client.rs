@@ -3,8 +3,8 @@ use near_primitives::types::AccountId;
 use near_crypto::SecretKey;
 
 use std::sync::Arc;
-use serde_json::Value;
 use dotenv::dotenv;
+use near_api::{NearGas, NearToken};
 
 pub struct NearClient {
     signer_account_id: AccountId,
@@ -56,11 +56,15 @@ impl NearClient {
         })
     }
 
-    pub async fn call<T: serde::de::DeserializeOwned + Send + Sync>(
+    pub async fn call<Args, T>(
         &self,
         method: &str,
-        args: Value
-    ) -> Result<Data<T>, Box<dyn std::error::Error>> {
+        args: Args,
+    ) -> Result<Data<T>, Box<dyn std::error::Error>>
+    where
+        Args: serde::Serialize,
+        T: serde::de::DeserializeOwned + Send + Sync,
+    {
         Contract(self.contract_id.clone())
             .call_function(method, args)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
@@ -70,15 +74,22 @@ impl NearClient {
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
-    pub async fn call_with_transaction(
+    pub async fn call_with_transaction<Args>(
         &self,
         method: &str,
-        args: Value
-    ) -> Result<near_primitives::views::FinalExecutionOutcomeView, Box<dyn std::error::Error>> {
+        args: Args,
+        gas: NearGas,
+        deposit: NearToken,
+    ) -> Result<near_primitives::views::FinalExecutionOutcomeView, Box<dyn std::error::Error>>
+    where
+        Args: serde::Serialize,
+    {
         Contract(self.contract_id.clone())
             .call_function(method, args)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
             .transaction()
+            .gas(gas)
+            .deposit(deposit)
             .with_signer(self.signer_account_id.clone(), self.signer.clone())
             .send_to(&self.network)
             .await

@@ -1,4 +1,4 @@
-use near_sdk::{AccountId, PanicOnDefault, BorshStorageKey};
+use near_sdk::{AccountId, PanicOnDefault, BorshStorageKey, PublicKey};
 use near_sdk::store::{LookupMap, IterableSet, IterableMap};
 use near_sdk::borsh::BorshSerialize;
 
@@ -36,6 +36,8 @@ pub struct StoredAuthenticator {
     pub user_verification: UserVerificationPolicy,
     pub vrf_public_keys: Vec<Vec<u8>>, // VRF public keys for stateless authentication (max 5, FIFO)
     pub device_number: u8, // Device number for this authenticator (1-indexed for UX)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near_public_key: Option<PublicKey>, // NEAR access-key public key used to register this authenticator/device
 }
 
 #[near_sdk::near(serializers = [borsh, json])]

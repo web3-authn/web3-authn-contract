@@ -1,5 +1,5 @@
 use super::{WebAuthnContract, WebAuthnContractExt};
-use near_sdk::{log, near, require, env, AccountId};
+use near_sdk::{log, near, require, env, AccountId, PublicKey};
 use near_sdk::store::IterableMap;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_ENGINE;
 use base64::Engine;
@@ -90,6 +90,7 @@ impl WebAuthnContract {
         vrf_public_keys: Vec<Vec<u8>>,
         origin_policy: OriginPolicy,
         expected_rp_id: String,
+        near_public_key: Option<PublicKey>,
     ) -> VerifyRegistrationResponse {
 
         require!(self.only_sender_or_admin(&account_id), "Must be called by the msg.sender, owner, or admins");
@@ -145,6 +146,7 @@ impl WebAuthnContract {
                 user_verification: UserVerificationPolicy::Preferred,
                 vrf_public_keys: vrf_public_keys, // Store all VRF keys
                 device_number,   // Store device number
+                near_public_key,
             }
         );
 

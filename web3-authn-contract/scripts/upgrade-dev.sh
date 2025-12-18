@@ -18,3 +18,9 @@ cargo near deploy build-non-reproducible-wasm $CONTRACT_ID \
 	--signer-public-key $DEPLOYER_PUBLIC_KEY \
 	--signer-private-key $DEPLOYER_PRIVATE_KEY \
     send
+
+# If storage layout has changed, run the on-chain migration (if one exists for your upgrade), e.g.:
+# near contract call-function as-transaction $CONTRACT_ID migrate json-args 'null' \
+#   prepaid-gas '300 Tgas' attached-deposit '0 NEAR' \
+#   sign-as $DEPLOYER_ACCOUNT network-config $NEAR_NETWORK_ID \
+#   sign-with-plaintext-private-key $DEPLOYER_PRIVATE_KEY send

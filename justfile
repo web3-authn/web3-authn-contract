@@ -6,6 +6,7 @@ default:
     @echo "  just deploy-dev  - Deploy contract to development"
     @echo "  just upgrade     - Upgrade contract in production"
     @echo "  just upgrade-dev - Upgrade contract in development"
+    @echo "  just migrate-v4-to-v5 [gas_tgas] - Run v4->v5 migration (only if dry-run test passes)"
     @echo ""
     @echo "Make sure to set up your .env file before running any commands."
 
@@ -28,3 +29,9 @@ upgrade:
 upgrade-dev:
     @echo "Upgrading contract in development..."
     cd ./web3-authn-contract && sh ./scripts/upgrade-dev.sh && cd ..
+
+# Run v4 -> v5 migration only if the sandbox dry-run test passes.
+#
+# Note: This runs the `migration` CLI, which reads environment variables from `migration/.env`.
+migrate-v4-to-v5 gas_tgas="300":
+    bash ./scripts/migrate-v4-to-v5.sh {{gas_tgas}}

@@ -458,6 +458,7 @@ mod tests {
             user_verification: UserVerificationPolicy::Required,
             vrf_public_keys: vec![vrf_public_key], // Store VRF public key for stateless auth
             device_number: 0,
+            near_public_key: None,
         }
     }
 
@@ -692,4 +693,3 @@ mod tests {
     }
 
 }
-
