@@ -178,6 +178,7 @@ impl WebAuthnContract {
             let new_map = IterableMap::new(storage_key_bytes);
             self.authenticators.insert(user_id.clone(), new_map);
         }
+
         // Check for duplicate device numbers
         if let Some(user_authenticators) = self.authenticators.get(&user_id) {
             for (existing_cred_id, existing_auth) in user_authenticators.iter() {
