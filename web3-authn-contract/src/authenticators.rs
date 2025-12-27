@@ -178,6 +178,19 @@ impl WebAuthnContract {
             let new_map = IterableMap::new(storage_key_bytes);
             self.authenticators.insert(user_id.clone(), new_map);
         }
+        // Check for duplicate device numbers
+        if let Some(user_authenticators) = self.authenticators.get(&user_id) {
+            for (existing_cred_id, existing_auth) in user_authenticators.iter() {
+                if existing_auth.device_number == authenticator.device_number {
+                    // Allow overwrite if it's the SAME credential ID (updating existing auth),
+                    // otherwise panic if another authenticator creates a conflict.
+                    if *existing_cred_id != credential_id {
+                        env::panic_str(&format!("Device number {} is already in use by another authenticator", authenticator.device_number));
+                    }
+                }
+            }
+        }
+
         // Insert the authenticator into the user's map
         if let Some(user_authenticators) = self.authenticators.get_mut(&user_id) {
             user_authenticators.insert(credential_id.clone(), authenticator);
@@ -216,5 +229,79 @@ impl WebAuthnContract {
             log!("No authenticators found for account {}", account_id);
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::{accounts, VMContextBuilder};
+    use near_sdk::testing_env;
+    use crate::contract_state::OriginPolicy;
+
+    fn get_context(predecessor_account_id: AccountId) -> VMContextBuilder {
+        let mut builder = VMContextBuilder::new();
+        builder
+            .current_account_id(accounts(0))
+            .signer_account_id(predecessor_account_id.clone())
+            .predecessor_account_id(predecessor_account_id);
+        builder
+    }
+
+    #[test]
+    fn test_internal_store_authenticator_enforces_device_uniqueness() {
+        let user_id = accounts(1);
+        let context = get_context(user_id.clone());
+        testing_env!(context.build());
+
+        let mut contract = WebAuthnContract::init();
+
+        // 1. Store first authenticator (Device 1)
+        let auth1 = StoredAuthenticator {
+            credential_public_key: vec![1, 2, 3],
+            transports: None,
+            registered: "123".to_string(),
+            expected_rp_id: "test".to_string(),
+            origin_policy: OriginPolicy::default(),
+            user_verification: UserVerificationPolicy::Preferred,
+            vrf_public_keys: vec![],
+            device_number: 1,
+            near_public_key: None,
+        };
+        contract.internal_store_authenticator(user_id.clone(), "cred1".to_string(), auth1.clone());
+
+        // 2. Store second authenticator (Device 2) - Should succeed
+        let auth2 = StoredAuthenticator {
+            credential_public_key: vec![4, 5, 6],
+            transports: None,
+            registered: "123".to_string(),
+            expected_rp_id: "test".to_string(),
+            origin_policy: OriginPolicy::default(),
+            user_verification: UserVerificationPolicy::Preferred,
+            vrf_public_keys: vec![],
+            device_number: 2, // Different device number
+            near_public_key: None,
+        };
+        contract.internal_store_authenticator(user_id.clone(), "cred2".to_string(), auth2);
+
+        // 3. Update first authenticator (Device 1) - Should succeed (same cred ID)
+        contract.internal_store_authenticator(user_id.clone(), "cred1".to_string(), auth1.clone());
+
+        // 4. Try to store third authenticator with Device 1 (Duplicate) - Should Panic
+        let auth3 = StoredAuthenticator {
+            credential_public_key: vec![7, 8, 9],
+            transports: None,
+            registered: "123".to_string(),
+            expected_rp_id: "test".to_string(),
+            origin_policy: OriginPolicy::default(),
+            user_verification: UserVerificationPolicy::Preferred,
+            vrf_public_keys: vec![],
+            device_number: 1, // Duplicate device number!
+            near_public_key: None,
+        };
+
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.internal_store_authenticator(user_id.clone(), "cred3".to_string(), auth3);
+        })).expect_err("Should panic due to duplicate device number");
     }
 }
