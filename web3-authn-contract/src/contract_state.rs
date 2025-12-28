@@ -17,7 +17,7 @@ impl Default for VRFSettings {
     fn default() -> Self {
         Self {
             max_input_age_ms: 300_000, // 5 minutes
-            max_block_age: 100,        // 100 blocks (~60 seconds, accommodates TouchID delays)
+            max_block_age: 200,        // 200 blocks (~120 seconds, accommodates TouchID delays)
             enabled: true,
             max_authenticators_per_account: 50,
         }

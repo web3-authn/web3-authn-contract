@@ -286,7 +286,7 @@ mod tests {
     fn create_valid_vrf_settings() -> VRFSettings {
         VRFSettings {
             max_input_age_ms: 300_000,
-            max_block_age: 100,
+            max_block_age: 200,
             enabled: true,
             max_authenticators_per_account: 10,
         }

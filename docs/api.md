@@ -372,7 +372,7 @@ pub struct AuthenticationInfo {
 ```rust
 pub struct VRFSettings {
     pub max_input_age_ms: u64,                    // Max age for VRF input (default: 5 min)
-    pub max_block_age: u64,                       // Max block age (default: 100 blocks)
+    pub max_block_age: u64,                       // Max block age (default: 200 blocks)
     pub enabled: bool,                            // VRF feature flag (default: true)
     pub max_authenticators_per_account: usize,    // Max authenticators per account (default: 10)
 }

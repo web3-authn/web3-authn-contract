@@ -77,7 +77,7 @@ NEAR's security model prevents contracts from directly modifying other accounts'
 - **Maximum allowed origins**: 5000
 - **Maximum origin length**: 255 characters
 - **VRF challenge freshness**: 5 minutes (configurable)
-- **Block age for VRF**: 100 blocks (~60 seconds, configurable)
+- **Block age for VRF**: 200 blocks (~120 seconds, configurable)
 
 **Rationale:**
 These limits prevent resource exhaustion attacks and ensure reasonable gas costs for common operations.
