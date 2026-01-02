@@ -16,10 +16,12 @@ use base64::{
 use crate::contract_state::VRFSettings;
 
 // Constants for validation
+const VRF_DOMAIN_SEPARATOR: &[u8] = b"web3_authn_challenge_v3";
 const VRF_PROOF_SIZE: usize = 80;       // ECVRF Ristretto proof size
 const VRF_PUBLIC_KEY_SIZE: usize = 32;  // ECVRF Ristretto public key size
 const VRF_OUTPUT_SIZE: usize = 64;      // VRF output size
 const VRF_INPUT_DATA_SIZE: usize = 32;  // SHA256 hash size
+const VRF_INTENT_DIGEST_32_SIZE: usize = 32; // Expected UI intent digest size
 const BLOCK_HASH_SIZE: usize = 32;      // NEAR block hash size
 const MAX_USER_ID_LENGTH: usize = 64;   // Maximum NEAR account ID length
 const MAX_RP_ID_LENGTH: usize = 253;    // Maximum domain length per RFC 1034
@@ -43,12 +45,14 @@ pub enum VRFVerificationError {
     DeserializationFailed,
     VerificationFailed,
     StaleChallenge,
+    VrfInputDataMismatch,
     // New validation errors
     InvalidProofSize,
     InvalidPublicKeySize,
     InvalidOutputSize,
     InvalidInputDataSize,
     InvalidBlockHashSize,
+    InvalidIntentDigestSize,
     InvalidUserIdLength,
     InvalidRpIdLength,
     InvalidBlockHeight,
@@ -79,7 +83,7 @@ impl From<vrf_contract_verifier::VerificationError> for VRFVerificationError {
 #[derive(Debug, Clone)]
 pub struct VRFVerificationData {
     /// SHA256 hash of concatenated VRF input components:
-    /// domain_separator + user_id + rp_id + block_height + block_hash
+    /// domain_separator + user_id + rp_id + block_height + block_hash + intent_digest_32
     /// This hashed data is used for VRF proof verification
     pub vrf_input_data: Vec<u8>,
     /// Used as the WebAuthn challenge (VRF output)
@@ -98,6 +102,17 @@ pub struct VRFVerificationData {
     /// NOTE: NEAR contracts cannot access historical block hashes, so this is used
     /// purely for additional entropy in the VRF input construction
     pub block_hash: Vec<u8>,
+    /// Optional 32-byte UI intent digest (receiver/actions only).
+    /// This is used for UI/host confirmation and VRF binding, and is not necessarily the final
+    /// on-chain signable message digest (e.g., NEAR tx hash also commits to nonce, recent block, etc.).
+    /// When present, it must be exactly 32 bytes and is included in VRF input derivation.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "intent_digest",
+        alias = "intentDigest"
+    )]
+    pub intent_digest_32: Option<Vec<u8>>,
 }
 
 /// VRF authentication response with output
@@ -165,6 +180,18 @@ fn validate_vrf_verification_data(
         return Err(VRFVerificationError::InvalidBlockHashSize);
     }
 
+    // 6.a Validate intent_digest_32 size (optional, but must be exactly 32 bytes when present)
+    if let Some(intent_digest_32) = vrf_data.intent_digest_32.as_ref() {
+        if intent_digest_32.len() != VRF_INTENT_DIGEST_32_SIZE {
+            log!(
+                "intent_digest_32 size validation failed: expected {} bytes, got {} bytes",
+                VRF_INTENT_DIGEST_32_SIZE,
+                intent_digest_32.len()
+            );
+            return Err(VRFVerificationError::InvalidIntentDigestSize);
+        }
+    }
+
     // 7. Validate user_id length and format
     if vrf_data.user_id.is_empty() {
         log!("User ID validation failed: empty user_id");
@@ -208,8 +235,28 @@ fn validate_vrf_verification_data(
         }
     }
 
+    // 9. Validate that the claimed vrf_input_data matches our expected derivation
+    let expected_vrf_input_data = derive_vrf_input_data(vrf_data);
+    if expected_vrf_input_data != vrf_data.vrf_input_data {
+        log!("VRF input hash mismatch: vrf_input_data does not match derived input components");
+        return Err(VRFVerificationError::VrfInputDataMismatch);
+    }
+
     log!("VRF verification data validation passed successfully");
     Ok(())
+}
+
+fn derive_vrf_input_data(vrf_data: &VRFVerificationData) -> Vec<u8> {
+    let mut input_data = Vec::new();
+    input_data.extend_from_slice(VRF_DOMAIN_SEPARATOR);
+    input_data.extend_from_slice(vrf_data.user_id.as_bytes());
+    input_data.extend_from_slice(vrf_data.rp_id.to_ascii_lowercase().as_bytes());
+    input_data.extend_from_slice(&vrf_data.block_height.to_le_bytes());
+    input_data.extend_from_slice(&vrf_data.block_hash);
+    if let Some(intent_digest_32) = vrf_data.intent_digest_32.as_ref() {
+        input_data.extend_from_slice(intent_digest_32);
+    }
+    env::sha256(&input_data)
 }
 
 /// Verify VRF proof and extract WebAuthn challenge
@@ -280,6 +327,7 @@ mod tests {
             rp_id: "example.com".to_string(),
             block_height: 1000,
             block_hash: vec![0u8; BLOCK_HASH_SIZE],
+            intent_digest_32: None,
         }
     }
 
@@ -449,6 +497,7 @@ mod tests {
             rp_id: "example.com".to_string(),
             block_height: 123456789,
             block_hash: vec![1u8; BLOCK_HASH_SIZE],
+            intent_digest_32: Some(vec![2u8; VRF_INTENT_DIGEST_32_SIZE]),
         };
 
         let json_str = serde_json::to_string(&vrf_data).expect("Should serialize to JSON");
@@ -462,6 +511,7 @@ mod tests {
         assert_eq!(vrf_data.rp_id, deserialized.rp_id);
         assert_eq!(vrf_data.block_height, deserialized.block_height);
         assert_eq!(vrf_data.block_hash, deserialized.block_hash);
+        assert_eq!(vrf_data.intent_digest_32, deserialized.intent_digest_32);
 
         println!("VRFVerificationData serialization test passed");
     }

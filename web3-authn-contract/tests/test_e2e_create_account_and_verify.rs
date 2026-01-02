@@ -343,7 +343,8 @@ async fn test_vrf_registration_corrupted_proof() -> Result<(), Box<dyn std::erro
                 "user_id": vrf_data.user_id,
                 "rp_id": vrf_data.rp_id,
                 "block_height": vrf_data.block_height,
-                "block_hash": vrf_data.block_hash
+                "block_hash": vrf_data.block_hash,
+                "intent_digest_32": vrf_data.intent_digest_32
             },
             "webauthn_registration": webauthn_registration,
             "deterministic_vrf_public_key": deterministic_vrf_public_key
@@ -459,6 +460,7 @@ async fn test_vrf_data_structure_serialization() -> Result<(), Box<dyn std::erro
     assert!(vrf_verification_data.get("user_id").is_some(), "Should have user_id");
     assert!(vrf_verification_data.get("block_height").is_some(), "Should have block_height");
     assert!(vrf_verification_data.get("block_hash").is_some(), "Should have block_hash");
+    assert!(vrf_verification_data.get("intent_digest_32").is_some(), "Should have intent_digest_32");
 
     // Validate sizes
     let vrf_input = vrf_verification_data["vrf_input_data"].as_array().unwrap();
@@ -466,6 +468,7 @@ async fn test_vrf_data_structure_serialization() -> Result<(), Box<dyn std::erro
     let vrf_proof = vrf_verification_data["vrf_proof"].as_array().unwrap();
     let public_key = vrf_verification_data["public_key"].as_array().unwrap();
     let block_height = vrf_verification_data["block_height"].as_u64().unwrap();
+    let intent_digest_32 = vrf_verification_data["intent_digest_32"].as_array().unwrap();
     let block_hash_bytes: Vec<u8> = vrf_verification_data["block_hash"].as_array().unwrap()
         .iter().map(|v| v.as_u64().unwrap() as u8).collect();
     let block_hash = bs58::encode(block_hash_bytes).into_string();
@@ -476,6 +479,7 @@ async fn test_vrf_data_structure_serialization() -> Result<(), Box<dyn std::erro
     assert!(public_key.len() > 0, "Public key should not be empty");
     assert!(block_height > 0, "Block height should be positive");
     assert!(block_hash.len() > 0, "Block hash should not be empty");
+    assert_eq!(intent_digest_32.len(), 32, "intent_digest_32 should be 32 bytes");
 
     println!("VRF data structure serialization test passed");
     println!("  - VRF input: {} bytes", vrf_input.len());

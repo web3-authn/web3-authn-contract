@@ -76,6 +76,25 @@ impl WebAuthnContract {
         log!("  - User ID: {}", vrf_data.user_id);
         log!("  - RP ID (domain): {}", vrf_data.rp_id);
 
+        // Require a 32-byte UI intent digest to bind this authentication to the confirmed receiver/actions intent.
+        let Some(intent_digest_32) = vrf_data.intent_digest_32.as_ref() else {
+            log!("Missing intent_digest_32");
+            return VerifiedAuthenticationResponse {
+                verified: false,
+                authentication_info: None,
+            };
+        };
+        if intent_digest_32.len() != 32 {
+            log!(
+                "Invalid intent_digest_32: expected 32 bytes, got {} bytes",
+                intent_digest_32.len()
+            );
+            return VerifiedAuthenticationResponse {
+                verified: false,
+                authentication_info: None,
+            };
+        }
+
         // 1. Validate VRF and extract WebAuthn challenge (view-only)
         let vrf_challenge_b64url = match verify_vrf_and_extract_challenge(&vrf_data, &self.vrf_settings) {
             Some(challenge) => challenge,
@@ -338,6 +357,7 @@ mod tests {
         pub output: Vec<u8>,
         pub proof: Vec<u8>,
         pub public_key: Vec<u8>,
+        pub intent_digest_32: Vec<u8>,
     }
 
     impl MockVRFData {
@@ -346,18 +366,18 @@ mod tests {
             let domain = b"web3_authn_challenge_v3";
             let user_id = b"test_user_123";
             let rp_id = b"example.com"; // Use proper domain for RP ID
-            let session_id = b"auth_session_xyz789";
             let block_height = 54321u64;
-            let block_hash = b"mock_auth_block_hash_32_bytes_abc";
+            let block_hash = [0x11u8; 32];
+            let intent_digest_32 = [0x22u8; 32];
 
             // Construct VRF input similar to the spec
             let mut input_data = Vec::new();
             input_data.extend_from_slice(domain);
             input_data.extend_from_slice(user_id);
             input_data.extend_from_slice(rp_id); // RP ID is part of VRF input construction
-            input_data.extend_from_slice(session_id);
             input_data.extend_from_slice(&block_height.to_le_bytes());
-            input_data.extend_from_slice(block_hash);
+            input_data.extend_from_slice(&block_hash);
+            input_data.extend_from_slice(&intent_digest_32);
 
             // Hash the input data (VRF input should be hashed)
             let hashed_input = near_sdk::env::sha256(&input_data);
@@ -376,6 +396,7 @@ mod tests {
                 output: vrf_output,
                 proof: vrf_proof,
                 public_key: vrf_public_key,
+                intent_digest_32: intent_digest_32.to_vec(),
             }
         }
     }
@@ -500,7 +521,8 @@ mod tests {
             user_id: "alice.testnet".to_string(), // NEAR account_id
             rp_id: "example.com".to_string(),
             block_height: 54321u64,
-            block_hash: b"mock_auth_block_hash_32_bytes_abc".to_vec(),
+            block_hash: vec![0x11u8; 32],
+            intent_digest_32: Some(mock_vrf.intent_digest_32.clone()),
         };
 
         // Create mock WebAuthn authentication
@@ -538,7 +560,8 @@ mod tests {
             user_id: "alice.testnet".to_string(), // NEAR account_id
             rp_id: "example.com".to_string(),
             block_height: 54321u64,
-            block_hash: b"mock_auth_block_hash_32_bytes_abc".to_vec(),
+            block_hash: vec![0x11u8; 32],
+            intent_digest_32: Some(mock_vrf.intent_digest_32),
         };
 
         // Test serialization
@@ -553,6 +576,7 @@ mod tests {
         assert_eq!(vrf_data.user_id, deserialized.user_id);
         assert_eq!(vrf_data.block_height, deserialized.block_height);
         assert_eq!(vrf_data.block_hash, deserialized.block_hash);
+        assert_eq!(vrf_data.intent_digest_32, deserialized.intent_digest_32);
 
         println!("VRF authentication data serialization test passed");
     }
@@ -670,6 +694,7 @@ mod tests {
             user_id: alice.to_string(), // Convert AccountId to String
             block_height: 123456789,
             block_hash: vec![0x01; 32], // 32 bytes for block hash
+            intent_digest_32: Some(mock_vrf.intent_digest_32),
         };
 
         // Create mock WebAuthn authentication

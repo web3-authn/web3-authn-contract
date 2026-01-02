@@ -19,6 +19,7 @@ pub struct VRFVerificationData {
     pub rp_id: String,              // Relying Party ID
     pub block_height: u64,          // NEAR block height for freshness
     pub block_hash: Vec<u8>,        // NEAR block hash for entropy
+    pub intent_digest_32: Option<Vec<u8>>, // Optional 32-byte UI intent digest bound into VRF input
 }
 ```
 

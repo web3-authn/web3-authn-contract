@@ -139,9 +139,10 @@ async fn test_verify_authentication_response() {
               "user_id": vrf_data.user_id,
               "rp_id": vrf_data.rp_id,
               "block_height": vrf_data.block_height,
-              "block_hash": vrf_data.block_hash
+              "block_hash": vrf_data.block_hash,
+              "intent_digest_32": vrf_data.intent_digest_32
           },
-          "webauthn_data": {
+          "webauthn_authentication": {
               "id": "credential_id",
               "rawId": raw_credential_id_bytes,
               "response": {
@@ -172,6 +173,7 @@ The SDK provides a WASM worker which handles these web3authn contrat calls, decr
 | `relying_party_id` | Binds it to a specific origin (e.g. `"example.com"`)               | Client configuration      |
 | `block_height`     | Ensures freshness and replay protection from NEAR                   | NEAR RPC call             |
 | `block_hash`       | Prevents challenge reuse across forks or block reorgs               | NEAR RPC call             |
+| `intent_digest_32` | Binds the 32-byte UI intent digest (canonical receiver/actions JSON; excludes nonce/block fields) | Client-side derivation |
 
 
 VRF based challenge generation is required for client-side webauthn challenege generation for security reasons:
@@ -272,4 +274,3 @@ sequenceDiagram
     Contract->>Contract: 13. Verify WebAuthn authentication ✓
     Contract->>Client: 14. Authentication complete ✓
 ```
-

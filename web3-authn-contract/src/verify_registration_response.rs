@@ -684,6 +684,7 @@ mod tests {
         pub output: Vec<u8>,
         pub proof: Vec<u8>,
         pub public_key: Vec<u8>,
+        pub intent_digest_32: Vec<u8>,
     }
 
     impl MockVRFData {
@@ -692,18 +693,18 @@ mod tests {
             let domain = b"web3_authn_challenge_v3";
             let user_id = b"test_user_123";
             let rp_id = b"test-contract.testnet";
-            let session_id = b"session_abc123";
             let block_height = 12345u64;
-            let block_hash = b"mock_block_hash_32_bytes_long_abc";
+            let block_hash = [0x11u8; 32];
+            let intent_digest_32 = [0x22u8; 32];
 
             // Construct VRF input similar to the spec
             let mut input_data = Vec::new();
             input_data.extend_from_slice(domain);
             input_data.extend_from_slice(user_id);
             input_data.extend_from_slice(rp_id);
-            input_data.extend_from_slice(session_id);
             input_data.extend_from_slice(&block_height.to_le_bytes());
-            input_data.extend_from_slice(block_hash);
+            input_data.extend_from_slice(&block_hash);
+            input_data.extend_from_slice(&intent_digest_32);
 
             // Hash the input data (VRF input should be hashed)
             let hashed_input = Sha256::digest(&input_data).to_vec();
@@ -722,6 +723,7 @@ mod tests {
                 output: vrf_output,
                 proof: vrf_proof,
                 public_key: vrf_public_key,
+                intent_digest_32: intent_digest_32.to_vec(),
             }
         }
     }
@@ -831,6 +833,7 @@ mod tests {
             rp_id: "example.com".to_string(),
             block_height: 1234567890u64,
             block_hash: b"mock_block_hash_32_bytes_long_abc".to_vec(),
+            intent_digest_32: None,
         };
 
         // Create WebAuthn registration data using VRF output as challenge
@@ -885,6 +888,7 @@ mod tests {
             rp_id: "example.com".to_string(),
             block_height: 1234567890u64,
             block_hash: b"mock_block_hash_32_bytes_long_abc".to_vec(),
+            intent_digest_32: None,
         };
 
         // Test JSON serialization
@@ -899,6 +903,7 @@ mod tests {
         assert_eq!(vrf_data.rp_id, deserialized.rp_id);
         assert_eq!(vrf_data.block_height, deserialized.block_height);
         assert_eq!(vrf_data.block_hash, deserialized.block_hash);
+        assert_eq!(vrf_data.intent_digest_32, deserialized.intent_digest_32);
 
         println!("VRFVerificationData serialization test passed");
     }
@@ -923,17 +928,17 @@ mod tests {
         let domain = b"web3_authn_challenge_v3";
         let user_id = b"alice.testnet";
         let rp_id = b"example.com";
-        let session_id = b"session_uuid_12345";
         let block_height = 123456789u64;
-        let block_hash = b"block_hash_32_bytes_long_example";
+        let block_hash = [0x33u8; 32];
+        let intent_digest_32 = [0x44u8; 32];
 
         let mut input_data = Vec::new();
         input_data.extend_from_slice(domain);
         input_data.extend_from_slice(user_id);
         input_data.extend_from_slice(rp_id);
-        input_data.extend_from_slice(session_id);
         input_data.extend_from_slice(&block_height.to_le_bytes());
-        input_data.extend_from_slice(block_hash);
+        input_data.extend_from_slice(&block_hash);
+        input_data.extend_from_slice(&intent_digest_32);
 
         let vrf_input = Sha256::digest(&input_data);
 
@@ -941,9 +946,9 @@ mod tests {
         println!("  - Domain: {:?}", std::str::from_utf8(domain).unwrap());
         println!("  - User ID: {:?}", std::str::from_utf8(user_id).unwrap());
         println!("  - RP ID: {:?}", std::str::from_utf8(rp_id).unwrap());
-        println!("  - Session ID: {:?}", std::str::from_utf8(session_id).unwrap());
         println!("  - Block height: {}", block_height);
-        println!("  - Block hash: {:?}", std::str::from_utf8(block_hash).unwrap());
+        println!("  - Block hash: {} bytes", block_hash.len());
+        println!("  - intent_digest_32: {} bytes", intent_digest_32.len());
         println!("  - Total input length: {} bytes", input_data.len());
         println!("  - SHA256 hash length: {} bytes", vrf_input.len());
 
@@ -974,6 +979,7 @@ mod tests {
             rp_id: "example.com".to_string(),
             block_height: 0,
             block_hash: Vec::new(),
+            intent_digest_32: None,
         };
 
         // Minimal WebAuthn registration payload (won't be reached because of early mismatch check)
@@ -1028,6 +1034,7 @@ mod tests {
             rp_id: "example.com".to_string(),
             block_height: 1234567890u64,
             block_hash: b"mock_block_hash_32_bytes_long_abc".to_vec(),
+            intent_digest_32: None,
         };
 
         let _promise = contract.create_account_and_register_user(

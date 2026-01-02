@@ -23,6 +23,7 @@ pub struct VrfData {
     pub rp_id: String,          // Relying Party ID used in construction
     pub block_height: u64,
     pub block_hash: Vec<u8>,
+    pub intent_digest_32: Vec<u8>, // 32-byte UI intent digest bound into VRF input
 }
 
 impl VrfData {
@@ -43,7 +44,8 @@ impl VrfData {
             "user_id": self.user_id,
             "rp_id": self.rp_id,
             "block_height": self.block_height,
-            "block_hash": self.block_hash
+            "block_hash": self.block_hash,
+            "intent_digest_32": self.intent_digest_32
         })
     }
 }
@@ -78,20 +80,22 @@ pub async fn generate_vrf_data(
     let mut rng = WasmRngFromSeed::from_seed(seed);
     let keypair = ECVRFKeyPair::generate(&mut rng);
 
-    // Construct VRF input according to specification
+    // Construct VRF input according to contract specification:
+    // sha256(domain_sep || user_id || rp_id || block_height || block_hash || intent_digest_32)
     let domain = b"web3_authn_challenge_v3";
     let block_hash = b"test_block_hash_32_bytes_for_reg";
-    let timestamp = 1700000000u64;
     let block_height = block_height.unwrap_or(123456789u64);
+
+    // For tests, treat session_id as the operation payload and hash it into a 32-byte signing digest.
+    let intent_digest_32 = Sha256::digest(session_id.as_bytes()).to_vec();
 
     let mut input_data = Vec::new();
     input_data.extend_from_slice(domain);
     input_data.extend_from_slice(user_id.as_bytes());
-    input_data.extend_from_slice(rp_id.as_bytes());
-    input_data.extend_from_slice(session_id.as_bytes());
+    input_data.extend_from_slice(rp_id.to_ascii_lowercase().as_bytes());
     input_data.extend_from_slice(&block_height.to_le_bytes());
     input_data.extend_from_slice(block_hash);
-    input_data.extend_from_slice(&timestamp.to_le_bytes());
+    input_data.extend_from_slice(&intent_digest_32);
 
     // Hash the input data (VRF input should be hashed)
     let vrf_input = Sha256::digest(&input_data).to_vec();
@@ -109,6 +113,7 @@ pub async fn generate_vrf_data(
     println!("  - RP ID: {}", rp_id);
     println!("  - User ID: {}", user_id);
     println!("  - Session ID: {}", session_id);
+    println!("  - intent_digest_32: {} bytes", intent_digest_32.len());
 
     Ok(VrfData {
         input_data: vrf_input,
@@ -119,6 +124,7 @@ pub async fn generate_vrf_data(
         rp_id: rp_id.to_string(),
         block_height: block_height,
         block_hash: block_hash.to_vec(),
+        intent_digest_32,
     })
 }
 
