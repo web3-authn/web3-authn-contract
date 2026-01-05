@@ -81,8 +81,8 @@ pub async fn generate_vrf_data(
     let keypair = ECVRFKeyPair::generate(&mut rng);
 
     // Construct VRF input according to contract specification:
-    // sha256(domain_sep || user_id || rp_id || block_height || block_hash || intent_digest_32)
-    let domain = b"web3_authn_challenge_v3";
+    // sha256(domain_sep || user_id || rp_id || block_height || block_hash || intent_digest_32 || session_policy_digest_32?)
+    let domain = b"web3_authn_challenge_v4";
     let block_hash = b"test_block_hash_32_bytes_for_reg";
     let block_height = block_height.unwrap_or(123456789u64);
 

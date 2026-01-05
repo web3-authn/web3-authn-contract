@@ -9,13 +9,13 @@ Serverless WebAuthn authentication system using VRF (Verifiable Random Functions
 ## VRF Challenge Construction
 
 **Input Components** (concatenated and SHA-256 hashed):
-- `domain`: `"web3_authn_challenge_v3"` (protocol separation)
-- `user_id`: NEAR account ID
-- `rp_id`: Relying Party ID (domain)
-- `session_id`: Client-generated UUID
-- `block_height`: NEAR block height (freshness)
-- `block_hash`: NEAR block hash (fork protection)
-- `timestamp`: Current timestamp (optional)
+- `domain`: `"web3_authn_challenge_v4"` (protocol separation)
+- `user_id`: NEAR account ID (bytes)
+- `rp_id`: Relying Party ID (domain, lowercased bytes)
+- `block_height`: NEAR block height (u64 LE bytes)
+- `block_hash`: NEAR block hash (32 bytes)
+- `intent_digest_32`: Optional 32-byte UI intent digest (when present)
+- `session_policy_digest_32`: Optional 32-byte session policy digest (when present)
 
 **Security Properties:**
 - Domain separation prevents cross-protocol reuse
@@ -47,4 +47,3 @@ See [Transaction Lifecycle](https://tatchi.xyz/docs/concepts/architecture.html#t
 - Origin binding via RP ID in VRF input
 - User presence/verification flags validated
 - Signature verification (ECDSA/EdDSA)
-

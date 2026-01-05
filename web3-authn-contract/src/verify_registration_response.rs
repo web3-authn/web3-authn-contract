@@ -690,7 +690,7 @@ mod tests {
     impl MockVRFData {
         fn create_mock() -> Self {
             // Create deterministic mock VRF data for testing
-            let domain = b"web3_authn_challenge_v3";
+            let domain = b"web3_authn_challenge_v4";
             let user_id = b"test_user_123";
             let rp_id = b"test-contract.testnet";
             let block_height = 12345u64;
@@ -834,6 +834,7 @@ mod tests {
             block_height: 1234567890u64,
             block_hash: b"mock_block_hash_32_bytes_long_abc".to_vec(),
             intent_digest_32: None,
+            session_policy_digest_32: None,
         };
 
         // Create WebAuthn registration data using VRF output as challenge
@@ -889,6 +890,7 @@ mod tests {
             block_height: 1234567890u64,
             block_hash: b"mock_block_hash_32_bytes_long_abc".to_vec(),
             intent_digest_32: None,
+            session_policy_digest_32: None,
         };
 
         // Test JSON serialization
@@ -904,6 +906,7 @@ mod tests {
         assert_eq!(vrf_data.block_height, deserialized.block_height);
         assert_eq!(vrf_data.block_hash, deserialized.block_hash);
         assert_eq!(vrf_data.intent_digest_32, deserialized.intent_digest_32);
+        assert_eq!(vrf_data.session_policy_digest_32, deserialized.session_policy_digest_32);
 
         println!("VRFVerificationData serialization test passed");
     }
@@ -925,7 +928,7 @@ mod tests {
     #[test]
     fn test_vrf_challenge_construction_format() {
         // Test that our VRF input construction matches the specification
-        let domain = b"web3_authn_challenge_v3";
+        let domain = b"web3_authn_challenge_v4";
         let user_id = b"alice.testnet";
         let rp_id = b"example.com";
         let block_height = 123456789u64;
@@ -980,6 +983,7 @@ mod tests {
             block_height: 0,
             block_hash: Vec::new(),
             intent_digest_32: None,
+            session_policy_digest_32: None,
         };
 
         // Minimal WebAuthn registration payload (won't be reached because of early mismatch check)
@@ -1035,6 +1039,7 @@ mod tests {
             block_height: 1234567890u64,
             block_hash: b"mock_block_hash_32_bytes_long_abc".to_vec(),
             intent_digest_32: None,
+            session_policy_digest_32: None,
         };
 
         let _promise = contract.create_account_and_register_user(

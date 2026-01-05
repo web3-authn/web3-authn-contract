@@ -363,7 +363,7 @@ mod tests {
     impl MockVRFData {
         fn create_mock() -> Self {
             // Create deterministic mock VRF data for testing
-            let domain = b"web3_authn_challenge_v3";
+            let domain = b"web3_authn_challenge_v4";
             let user_id = b"test_user_123";
             let rp_id = b"example.com"; // Use proper domain for RP ID
             let block_height = 54321u64;
@@ -523,6 +523,7 @@ mod tests {
             block_height: 54321u64,
             block_hash: vec![0x11u8; 32],
             intent_digest_32: Some(mock_vrf.intent_digest_32.clone()),
+            session_policy_digest_32: None,
         };
 
         // Create mock WebAuthn authentication
@@ -562,6 +563,7 @@ mod tests {
             block_height: 54321u64,
             block_hash: vec![0x11u8; 32],
             intent_digest_32: Some(mock_vrf.intent_digest_32),
+            session_policy_digest_32: None,
         };
 
         // Test serialization
@@ -577,6 +579,7 @@ mod tests {
         assert_eq!(vrf_data.block_height, deserialized.block_height);
         assert_eq!(vrf_data.block_hash, deserialized.block_hash);
         assert_eq!(vrf_data.intent_digest_32, deserialized.intent_digest_32);
+        assert_eq!(vrf_data.session_policy_digest_32, deserialized.session_policy_digest_32);
 
         println!("VRF authentication data serialization test passed");
     }
@@ -695,6 +698,7 @@ mod tests {
             block_height: 123456789,
             block_hash: vec![0x01; 32], // 32 bytes for block hash
             intent_digest_32: Some(mock_vrf.intent_digest_32),
+            session_policy_digest_32: None,
         };
 
         // Create mock WebAuthn authentication

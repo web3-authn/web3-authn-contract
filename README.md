@@ -140,7 +140,8 @@ async fn test_verify_authentication_response() {
               "rp_id": vrf_data.rp_id,
               "block_height": vrf_data.block_height,
               "block_hash": vrf_data.block_hash,
-              "intent_digest_32": vrf_data.intent_digest_32
+              "intent_digest_32": vrf_data.intent_digest_32,
+              "session_policy_digest_32": vrf_data.session_policy_digest_32
           },
           "webauthn_authentication": {
               "id": "credential_id",
@@ -168,12 +169,13 @@ The SDK provides a WASM worker which handles these web3authn contrat calls, decr
  VRF challenges are constructed using:
 | Field              | Purpose                                                              | Source                    |
 | ------------------ | -------------------------------------------------------------------- | ------------------------- |
-| `domain_separator` | Prevents cross-protocol collisions (`"web3_authn_challenge_v3"`)     | Fixed constant            |
+| `domain_separator` | Prevents cross-protocol collisions (`"web3_authn_challenge_v4"`)     | Fixed constant            |
 | `user_id`          | Binds the challenge to a user identity                               | Client session/state     |
 | `relying_party_id` | Binds it to a specific origin (e.g. `"example.com"`)               | Client configuration      |
 | `block_height`     | Ensures freshness and replay protection from NEAR                   | NEAR RPC call             |
 | `block_hash`       | Prevents challenge reuse across forks or block reorgs               | NEAR RPC call             |
 | `intent_digest_32` | Binds the 32-byte UI intent digest (canonical receiver/actions JSON; excludes nonce/block fields) | Client-side derivation |
+| `session_policy_digest_32` | Optionally binds a 32-byte session policy digest (session rules/constraints) | Client-side derivation |
 
 
 VRF based challenge generation is required for client-side webauthn challenege generation for security reasons:

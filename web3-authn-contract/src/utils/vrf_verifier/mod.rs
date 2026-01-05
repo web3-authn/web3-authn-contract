@@ -16,12 +16,13 @@ use base64::{
 use crate::contract_state::VRFSettings;
 
 // Constants for validation
-const VRF_DOMAIN_SEPARATOR: &[u8] = b"web3_authn_challenge_v3";
+const VRF_DOMAIN_SEPARATOR_V4: &[u8] = b"web3_authn_challenge_v4";
 const VRF_PROOF_SIZE: usize = 80;       // ECVRF Ristretto proof size
 const VRF_PUBLIC_KEY_SIZE: usize = 32;  // ECVRF Ristretto public key size
 const VRF_OUTPUT_SIZE: usize = 64;      // VRF output size
 const VRF_INPUT_DATA_SIZE: usize = 32;  // SHA256 hash size
 const VRF_INTENT_DIGEST_32_SIZE: usize = 32; // Expected UI intent digest size
+const VRF_SESSION_POLICY_DIGEST_32_SIZE: usize = 32; // Expected session policy digest size
 const BLOCK_HASH_SIZE: usize = 32;      // NEAR block hash size
 const MAX_USER_ID_LENGTH: usize = 64;   // Maximum NEAR account ID length
 const MAX_RP_ID_LENGTH: usize = 253;    // Maximum domain length per RFC 1034
@@ -53,6 +54,7 @@ pub enum VRFVerificationError {
     InvalidInputDataSize,
     InvalidBlockHashSize,
     InvalidIntentDigestSize,
+    InvalidSessionPolicyDigestSize,
     InvalidUserIdLength,
     InvalidRpIdLength,
     InvalidBlockHeight,
@@ -83,7 +85,7 @@ impl From<vrf_contract_verifier::VerificationError> for VRFVerificationError {
 #[derive(Debug, Clone)]
 pub struct VRFVerificationData {
     /// SHA256 hash of concatenated VRF input components:
-    /// domain_separator + user_id + rp_id + block_height + block_hash + intent_digest_32
+    /// domain_separator + user_id + rp_id + block_height + block_hash + intent_digest_32 + session_policy_digest_32
     /// This hashed data is used for VRF proof verification
     pub vrf_input_data: Vec<u8>,
     /// Used as the WebAuthn challenge (VRF output)
@@ -113,6 +115,14 @@ pub struct VRFVerificationData {
         alias = "intentDigest"
     )]
     pub intent_digest_32: Option<Vec<u8>>,
+    /// Optional 32-byte session policy digest.
+    /// When present, it must be exactly 32 bytes and is included in VRF input derivation.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "session_policy_digest_32"
+    )]
+    pub session_policy_digest_32: Option<Vec<u8>>,
 }
 
 /// VRF authentication response with output
@@ -192,6 +202,18 @@ fn validate_vrf_verification_data(
         }
     }
 
+    // 6.b Validate session_policy_digest_32 size (optional, but must be exactly 32 bytes when present)
+    if let Some(session_policy_digest_32) = vrf_data.session_policy_digest_32.as_ref() {
+        if session_policy_digest_32.len() != VRF_SESSION_POLICY_DIGEST_32_SIZE {
+            log!(
+                "session_policy_digest_32 size validation failed: expected {} bytes, got {} bytes",
+                VRF_SESSION_POLICY_DIGEST_32_SIZE,
+                session_policy_digest_32.len()
+            );
+            return Err(VRFVerificationError::InvalidSessionPolicyDigestSize);
+        }
+    }
+
     // 7. Validate user_id length and format
     if vrf_data.user_id.is_empty() {
         log!("User ID validation failed: empty user_id");
@@ -248,13 +270,16 @@ fn validate_vrf_verification_data(
 
 fn derive_vrf_input_data(vrf_data: &VRFVerificationData) -> Vec<u8> {
     let mut input_data = Vec::new();
-    input_data.extend_from_slice(VRF_DOMAIN_SEPARATOR);
+    input_data.extend_from_slice(VRF_DOMAIN_SEPARATOR_V4);
     input_data.extend_from_slice(vrf_data.user_id.as_bytes());
     input_data.extend_from_slice(vrf_data.rp_id.to_ascii_lowercase().as_bytes());
     input_data.extend_from_slice(&vrf_data.block_height.to_le_bytes());
     input_data.extend_from_slice(&vrf_data.block_hash);
     if let Some(intent_digest_32) = vrf_data.intent_digest_32.as_ref() {
         input_data.extend_from_slice(intent_digest_32);
+    }
+    if let Some(session_policy_digest_32) = vrf_data.session_policy_digest_32.as_ref() {
+        input_data.extend_from_slice(session_policy_digest_32);
     }
     env::sha256(&input_data)
 }
@@ -328,6 +353,7 @@ mod tests {
             block_height: 1000,
             block_hash: vec![0u8; BLOCK_HASH_SIZE],
             intent_digest_32: None,
+            session_policy_digest_32: None,
         }
     }
 
@@ -401,6 +427,19 @@ mod tests {
 
         let result = validate_vrf_verification_data(&vrf_data, &vrf_settings);
         assert!(matches!(result, Err(VRFVerificationError::InvalidBlockHashSize)));
+    }
+
+    #[test]
+    fn test_validate_vrf_verification_data_invalid_session_policy_digest_size() {
+        let mut vrf_data = create_valid_vrf_data();
+        vrf_data.session_policy_digest_32 = Some(vec![0u8; VRF_SESSION_POLICY_DIGEST_32_SIZE - 1]);
+        let vrf_settings = create_valid_vrf_settings();
+
+        let result = validate_vrf_verification_data(&vrf_data, &vrf_settings);
+        assert!(matches!(
+            result,
+            Err(VRFVerificationError::InvalidSessionPolicyDigestSize)
+        ));
     }
 
     #[test]
@@ -498,6 +537,7 @@ mod tests {
             block_height: 123456789,
             block_hash: vec![1u8; BLOCK_HASH_SIZE],
             intent_digest_32: Some(vec![2u8; VRF_INTENT_DIGEST_32_SIZE]),
+            session_policy_digest_32: Some(vec![3u8; VRF_SESSION_POLICY_DIGEST_32_SIZE]),
         };
 
         let json_str = serde_json::to_string(&vrf_data).expect("Should serialize to JSON");
@@ -512,7 +552,32 @@ mod tests {
         assert_eq!(vrf_data.block_height, deserialized.block_height);
         assert_eq!(vrf_data.block_hash, deserialized.block_hash);
         assert_eq!(vrf_data.intent_digest_32, deserialized.intent_digest_32);
+        assert_eq!(vrf_data.session_policy_digest_32, deserialized.session_policy_digest_32);
 
         println!("VRFVerificationData serialization test passed");
+    }
+
+    #[test]
+    fn test_vrf_verification_data_session_policy_digest_deserialization() {
+        let expected_digest = vec![9u8; VRF_SESSION_POLICY_DIGEST_32_SIZE];
+        let json_value = serde_json::json!({
+            "vrf_input_data": vec![1u8; VRF_INPUT_DATA_SIZE],
+            "vrf_output": vec![1u8; VRF_OUTPUT_SIZE],
+            "vrf_proof": vec![1u8; VRF_PROOF_SIZE],
+            "public_key": vec![1u8; VRF_PUBLIC_KEY_SIZE],
+            "user_id": "alice.testnet",
+            "rp_id": "example.com",
+            "block_height": 123456789,
+            "block_hash": vec![1u8; BLOCK_HASH_SIZE],
+            "intent_digest_32": null,
+            "session_policy_digest_32": expected_digest,
+        });
+
+        let deserialized: VRFVerificationData =
+            serde_json::from_value(json_value).expect("Should deserialize session_policy_digest_32");
+        assert_eq!(
+            deserialized.session_policy_digest_32,
+            Some(vec![9u8; VRF_SESSION_POLICY_DIGEST_32_SIZE])
+        );
     }
 }
